@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mini Civ</title>
+    <link rel="stylesheet" href="style.css">
+    <!-- Google Fonts for a bit of polish -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Roboto:wght@400;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="game-container">
+        <header>
+            <h1>MINI CIV</h1>
+        </header>
+        
+        <div class="main-layout">
+            <canvas id="gameCanvas" width="600" height="600"></canvas>
+            
+            <aside class="ui-panel">
+                <div class="panel-section status-box">
+                    <h2>Game Status</h2>
+                    <p id="turn-display">Turn: 1</p>
+                    <p id="player-display" class="player-turn">Player's Turn</p>
+                </div>
+
+                <div class="panel-section info-box">
+                    <h2>Selected Tile</h2>
+                    <div id="tile-info">
+                        <p>Hover/Click a tile</p>
+                    </div>
+                </div>
+
+                <div class="panel-section controls">
+                    <button id="end-turn-btn">End Turn</button>
+                    <button id="restart-btn" style="display:none;">Play Again</button>
+                </div>
+
+                <div class="panel-section help-box">
+                    <h3>How to Play</h3>
+                    <ul>
+                        <li><span class="legend-color" style="background:blue;"></span> Your Unit</li>
+                        <li><span class="legend-color" style="background:cyan;"></span> Your City</li>
+                        <li>Move your unit to the enemy city (<span class="legend-color" style="background:red;"></span>) to win.</li>
+                        <li>Avoid water.</li>
+                    </ul>
+                </div>
+            </aside>
+        </div>
+    </div>
+
+    <script src="game.js"></script>
+</body>
+</html>
