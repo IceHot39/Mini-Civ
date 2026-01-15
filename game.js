@@ -856,4 +856,8 @@ function collectResources(owner) {
                 }
             }
         }
+  }); // closes forEach(city => { ... })
+
+  return { gold, food }; // optional but recommended
+} // closes function collectResources(owner)
 
