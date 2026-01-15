@@ -267,8 +267,6 @@ function aiMoveUnit(unit, playerUnits, playerCities) {
 
 // Start game
 initGame();
-    });
-}
 
 function spawnEntities() {
     function getValidSpawn(minY, maxY, avoidWater = true) {
@@ -858,3 +856,4 @@ function collectResources(owner) {
                 }
             }
         }
+
