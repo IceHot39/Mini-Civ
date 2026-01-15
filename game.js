@@ -1,25 +1,42 @@
 // CONFIGURATION
-const GRID_SIZE = 10;
-const TILE_SIZE = 60; // Canvas is 600x600
-const ANIMATION_SPEED = 200; // ms for AI delays
+const GRID_SIZE = 12;
+const TILE_SIZE = 50;
+const ANIMATION_SPEED = 200;
 
 // TERRAIN DEFINITIONS
 const TERRAIN = {
-    TUNDRA: { type: 'tundra', color: '#bdc3c7', label: 'Tundra' },
-    PLAINS: { type: 'plains', color: '#2ecc71', label: 'Plains' },
-    RAINFOREST: { type: 'rainforest', color: '#27ae60', label: 'Rainforest' },
-    WATER: { type: 'water', color: '#3498db', label: 'Water' }
+    TUNDRA: { type: 'tundra', color: '#bdc3c7', label: 'Tundra', foodYield: 0, goldYield: 0 },
+    PLAINS: { type: 'plains', color: '#2ecc71', label: 'Plains', foodYield: 2, goldYield: 1 },
+    RAINFOREST: { type: 'rainforest', color: '#27ae60', label: 'Rainforest', foodYield: 1, goldYield: 0 },
+    WATER: { type: 'water', color: '#3498db', label: 'Water', foodYield: 1, goldYield: 0 },
+    MOUNTAIN: { type: 'mountain', color: '#95a5a6', label: 'Mountain', foodYield: 0, goldYield: 3 }
+};
+
+// UNIT TYPES
+const UNIT_TYPES = {
+    WARRIOR: { name: 'Warrior', cost: 40, maxHp: 50, attack: 10, defense: 10, moves: 2, color: '#3498db' },
+    ARCHER: { name: 'Archer', cost: 50, maxHp: 35, attack: 15, defense: 5, moves: 2, color: '#9b59b6' },
+    KNIGHT: { name: 'Knight', cost: 80, maxHp: 70, attack: 18, defense: 15, moves: 3, color: '#e67e22' },
+    SETTLER: { name: 'Settler', cost: 60, maxHp: 30, attack: 0, defense: 5, moves: 2, color: '#f39c12', canSettle: true }
 };
 
 // GAME STATE
 let map = [];
 let units = [];
 let cities = [];
-let floatingTexts = []; // { x, y, text, color, life, maxLife }
+let floatingTexts = [];
+let particles = [];
 let turn = 1;
 let isPlayerTurn = true;
-let selectedTile = null;
+let selectedUnit = null;
 let gameOver = false;
+let playerGold = 100;
+let playerFood = 50;
+let aiGold = 100;
+let aiFood = 50;
+let fogOfWar = [];
+let difficulty = 'normal'; // easy, normal, hard
+let soundEnabled = true;
 
 // DOM ELEMENTS
 const canvas = document.getElementById('gameCanvas');
@@ -29,6 +46,29 @@ const playerDisplay = document.getElementById('player-display');
 const tileInfoDisplay = document.getElementById('tile-info');
 const endTurnBtn = document.getElementById('end-turn-btn');
 const restartBtn = document.getElementById('restart-btn');
+const goldDisplay = document.getElementById('gold-display');
+const foodDisplay = document.getElementById('food-display');
+
+// AUDIO (simple beep synthesis)
+const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+function playSound(frequency, duration, type = 'sine') {
+    if (!soundEnabled) return;
+    const oscillator = audioContext.createOscillator();
+    const gainNode = audioContext.createGain();
+    
+    oscillator.connect(gainNode);
+    gainNode.connect(audioContext.destination);
+    
+    oscillator.frequency.value = frequency;
+    oscillator.type = type;
+    
+    gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + duration);
+    
+    oscillator.start(audioContext.currentTime);
+    oscillator.stop(audioContext.currentTime + duration);
+}
 
 // --- INITIALIZATION ---
 
@@ -37,20 +77,27 @@ function initGame() {
     units = [];
     cities = [];
     floatingTexts = [];
+    particles = [];
     turn = 1;
     isPlayerTurn = true;
     gameOver = false;
-    selectedTile = null;
-
+    selectedUnit = null;
+    playerGold = 100;
+    playerFood = 50;
+    aiGold = 100;
+    aiFood = 50;
+    
+    initFogOfWar();
     spawnEntities();
     updateUI();
     
-    // Start animation loop
     requestAnimationFrame(gameLoop);
     
     endTurnBtn.disabled = false;
     endTurnBtn.textContent = "End Turn";
     restartBtn.style.display = 'none';
+    
+    playSound(440, 0.1);
 }
 
 function generateMap() {
@@ -58,14 +105,14 @@ function generateMap() {
     for (let y = 0; y < GRID_SIZE; y++) {
         let row = [];
         for (let x = 0; x < GRID_SIZE; x++) {
-            // Random terrain generation
             const rand = Math.random();
             let terrain;
             
-            if (rand < 0.2) terrain = TERRAIN.WATER;
-            else if (rand < 0.5) terrain = TERRAIN.PLAINS;
-            else if (rand < 0.8) terrain = TERRAIN.RAINFOREST;
-            else terrain = TERRAIN.TUNDRA;
+            if (rand < 0.15) terrain = TERRAIN.WATER;
+            else if (rand < 0.45) terrain = TERRAIN.PLAINS;
+            else if (rand < 0.7) terrain = TERRAIN.RAINFOREST;
+            else if (rand < 0.85) terrain = TERRAIN.TUNDRA;
+            else terrain = TERRAIN.MOUNTAIN;
 
             row.push({ x, y, terrain });
         }
@@ -74,38 +121,245 @@ function generateMap() {
     return newMap;
 }
 
+function initFogOfWar() {
+    fogOfWar = [];
+    for (let y = 0; y < GRID_SIZE; y++) {
+        let row = [];
+        for (let x = 0; x < GRID_SIZE; x++) {
+            row.push(true); // true = fogged
+        }
+        fogOfWar.push(row);
+    }
+}
+
+function updateVision() {
+    // Reset fog
+    for (let y = 0; y < GRID_SIZE; y++) {
+        for (let x = 0; x < GRID_SIZE; x++) {
+            fogOfWar[y][x] = true;
+        }
+    }
+    
+    // Reveal around player units and cities
+    const playerEntities = [
+        ...units.filter(u => u.owner === 'player'),
+        ...cities.filter(c => c.owner === 'player')
+    ];
+    
+    playerEntities.forEach(entity => {
+        const visionRange = 2;
+        for (let dy = -visionRange; dy <= visionRange; dy++) {
+            for (let dx = -visionRange; dx <= visionRange; dx++) {
+                const nx = entity.x + dx;
+                const ny = entity.y + dy;
+                if (nx >= 0 && nx < GRID_SIZE && ny >= 0 && ny < GRID_SIZE) {
+                    fogOfWar[ny][nx] = false;
+                }
+            }
+        }
+    });
+    
+    if (owner === 'player') {
+        playerGold += gold;
+        playerFood += food;
+    } else {
+        aiGold += gold;
+        aiFood += food;
+    }
+}
+
+// --- TURN SYSTEM ---
+
+endTurnBtn.addEventListener('click', () => {
+    if (!isPlayerTurn || gameOver) return;
+    
+    endPlayerTurn();
+});
+
+restartBtn.addEventListener('click', () => {
+    initGame();
+});
+
+function endPlayerTurn() {
+    isPlayerTurn = false;
+    selectedUnit = null;
+    collectResources('player');
+    updateUI();
+    
+    setTimeout(aiTurn, 800);
+}
+
+function aiTurn() {
+    if (gameOver) return;
+
+    const aiUnits = units.filter(u => u.owner === 'ai');
+    const playerUnits = units.filter(u => u.owner === 'player');
+    const playerCities = cities.filter(c => c.owner === 'player');
+    
+    if (aiUnits.length === 0) return;
+
+    // AI takes actions with each unit
+    aiUnits.forEach(unit => {
+        if (unit.moves > 0) {
+            aiMoveUnit(unit, playerUnits, playerCities);
+        }
+    });
+
+    if (gameOver) return;
+
+    // AI produces units
+    const aiCities = cities.filter(c => c.owner === 'ai');
+    aiCities.forEach(city => {
+        if (aiGold >= UNIT_TYPES.WARRIOR.cost && Math.random() > 0.5) {
+            const newUnit = createUnit('WARRIOR', city.x, city.y, 'ai');
+            newUnit.color = '#c0392b';
+            units.push(newUnit);
+            aiGold -= UNIT_TYPES.WARRIOR.cost;
+        }
+    });
+
+    collectResources('ai');
+
+    // End AI turn
+    turn++;
+    isPlayerTurn = true;
+    
+    // Reset moves
+    units.forEach(u => u.moves = u.maxMoves);
+    
+    updateUI();
+    updateVision();
+}
+
+function aiMoveUnit(unit, playerUnits, playerCities) {
+    const target = playerCities.length > 0 ? playerCities[0] : (playerUnits.length > 0 ? playerUnits[0] : null);
+    if (!target) return;
+
+    const validMoves = getValidMoves(unit);
+    if (validMoves.length === 0) return;
+
+    // Check if can attack
+    const attackTarget = playerUnits.find(p => 
+        validMoves.some(m => m.x === p.x && m.y === p.y)
+    );
+
+    if (attackTarget) {
+        attemptMove(unit, attackTarget.x, attackTarget.y);
+        return;
+    }
+
+    // Move towards target
+    let bestMove = null;
+    let minDist = Infinity;
+
+    validMoves.forEach(move => {
+        const dist = Math.abs(move.x - target.x) + Math.abs(move.y - target.y);
+        if (dist < minDist) {
+            minDist = dist;
+            bestMove = move;
+        }
+    });
+
+    if (bestMove) {
+        attemptMove(unit, bestMove.x, bestMove.y);
+    }
+}
+
+// Start game
+initGame();
+    });
+}
+
 function spawnEntities() {
-    // Helper to find valid spawn (not water)
-    function getValidSpawn(minY, maxY) {
-        let x, y;
+    function getValidSpawn(minY, maxY, avoidWater = true) {
+        let x, y, attempts = 0;
         do {
             x = Math.floor(Math.random() * GRID_SIZE);
             y = Math.floor(Math.random() * (maxY - minY + 1)) + minY;
-        } while (map[y][x].terrain === TERRAIN.WATER);
+            attempts++;
+            if (attempts > 100) {
+                avoidWater = false;
+            }
+        } while (
+            (avoidWater && (map[y][x].terrain === TERRAIN.WATER || map[y][x].terrain === TERRAIN.MOUNTAIN))
+        );
         return { x, y };
     }
 
-    // Player (Bottom half)
-    const playerStart = getValidSpawn(6, 9);
-    cities.push({ x: playerStart.x, y: playerStart.y, owner: 'player', color: '#00ffff' });
-    units.push({ x: playerStart.x, y: playerStart.y, owner: 'player', moves: 1, color: '#0000ff', hp: 50, maxHp: 50 });
+    // Player starting position
+    const playerStart = getValidSpawn(Math.floor(GRID_SIZE * 0.7), GRID_SIZE - 1);
+    cities.push({ 
+        x: playerStart.x, 
+        y: playerStart.y, 
+        owner: 'player', 
+        color: '#00ffff',
+        name: 'Capital',
+        production: null,
+        productionProgress: 0
+    });
+    
+    const warrior = createUnit('WARRIOR', playerStart.x, playerStart.y, 'player');
+    units.push(warrior);
 
-    // AI (Top half)
-    const aiStart = getValidSpawn(0, 3);
-    cities.push({ x: aiStart.x, y: aiStart.y, owner: 'ai', color: '#e74c3c' });
-    units.push({ x: aiStart.x, y: aiStart.y, owner: 'ai', moves: 1, color: '#c0392b', hp: 50, maxHp: 50 });
+    // AI starting position
+    const aiStart = getValidSpawn(0, Math.floor(GRID_SIZE * 0.3));
+    cities.push({ 
+        x: aiStart.x, 
+        y: aiStart.y, 
+        owner: 'ai', 
+        color: '#e74c3c',
+        name: 'Enemy City',
+        production: null,
+        productionProgress: 0
+    });
+    
+    const aiWarrior = createUnit('WARRIOR', aiStart.x, aiStart.y, 'ai');
+    aiWarrior.color = '#c0392b';
+    units.push(aiWarrior);
+    
+    updateVision();
+}
+
+function createUnit(typeName, x, y, owner) {
+    const type = UNIT_TYPES[typeName];
+    return {
+        x, y, owner,
+        type: typeName,
+        name: type.name,
+        maxHp: type.maxHp,
+        hp: type.maxHp,
+        attack: type.attack,
+        defense: type.defense,
+        moves: type.moves,
+        maxMoves: type.moves,
+        color: owner === 'player' ? type.color : '#c0392b',
+        canSettle: type.canSettle || false
+    };
 }
 
 // --- HELPER FUNCTIONS ---
 
-// Approximate normal distribution using Box-Muller transform
 function randomNormal(mean, stdDev) {
     let u = 0, v = 0;
-    while(u === 0) u = Math.random(); // Converting [0,1) to (0,1)
+    while(u === 0) u = Math.random();
     while(v === 0) v = Math.random();
-    let num = Math.sqrt( -2.0 * Math.log( u ) ) * Math.cos( 2.0 * Math.PI * v );
-    num = num * stdDev + mean;
-    return Math.round(num);
+    let num = Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+    return Math.round(num * stdDev + mean);
+}
+
+function createParticle(x, y, color) {
+    for (let i = 0; i < 5; i++) {
+        particles.push({
+            x: x * TILE_SIZE + TILE_SIZE/2,
+            y: y * TILE_SIZE + TILE_SIZE/2,
+            vx: (Math.random() - 0.5) * 3,
+            vy: (Math.random() - 0.5) * 3,
+            life: 30,
+            maxLife: 30,
+            color: color,
+            size: Math.random() * 3 + 2
+        });
+    }
 }
 
 // --- RENDERING ---
@@ -123,9 +377,21 @@ function update() {
     for (let i = floatingTexts.length - 1; i >= 0; i--) {
         const ft = floatingTexts[i];
         ft.life--;
-        ft.y -= 0.02; // Float up
+        ft.y -= 0.5;
         if (ft.life <= 0) {
             floatingTexts.splice(i, 1);
+        }
+    }
+    
+    // Update particles
+    for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.x += p.vx;
+        p.y += p.vy;
+        p.vy += 0.1; // Gravity
+        p.life--;
+        if (p.life <= 0) {
+            particles.splice(i, 1);
         }
     }
 }
@@ -142,21 +408,28 @@ function draw() {
             ctx.fillStyle = tile.terrain.color;
             ctx.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
 
-            // Grid Lines (subtle)
+            // Fog of War
+            if (fogOfWar[y][x]) {
+                ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                ctx.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+            }
+
+            // Grid Lines
             ctx.strokeStyle = 'rgba(0,0,0,0.1)';
+            ctx.lineWidth = 1;
             ctx.strokeRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
         }
     }
 
     // Draw Cities
     cities.forEach(city => {
-        // City shadow
-        ctx.fillStyle = 'rgba(0,0,0,0.3)';
-        ctx.fillRect(city.x * TILE_SIZE + 10, city.y * TILE_SIZE + 10, TILE_SIZE - 10, TILE_SIZE - 10);
+        if (fogOfWar[city.y][city.x] && city.owner === 'ai') return;
         
-        // City body
+        ctx.fillStyle = 'rgba(0,0,0,0.3)';
+        ctx.fillRect(city.x * TILE_SIZE + 8, city.y * TILE_SIZE + 8, TILE_SIZE - 8, TILE_SIZE - 8);
+        
         ctx.fillStyle = city.color;
-        const padding = 12;
+        const padding = 10;
         ctx.fillRect(
             city.x * TILE_SIZE + padding, 
             city.y * TILE_SIZE + padding, 
@@ -164,7 +437,6 @@ function draw() {
             TILE_SIZE - padding * 2
         );
         
-        // City Border
         ctx.strokeStyle = '#fff';
         ctx.lineWidth = 2;
         ctx.strokeRect(
@@ -174,22 +446,31 @@ function draw() {
             TILE_SIZE - padding * 2
         );
         
-        // Label
         ctx.fillStyle = '#fff';
-        ctx.font = '10px Arial';
+        ctx.font = 'bold 10px Arial';
         ctx.textAlign = 'center';
-        ctx.fillText(city.owner === 'player' ? 'P' : 'AI', city.x * TILE_SIZE + TILE_SIZE/2, city.y * TILE_SIZE + TILE_SIZE/2 + 4);
+        ctx.fillText(city.owner === 'player' ? 'P' : 'AI', 
+            city.x * TILE_SIZE + TILE_SIZE/2, 
+            city.y * TILE_SIZE + TILE_SIZE/2 + 4);
     });
 
-    // Draw Selection Highlight
-    if (selectedTile) {
-        ctx.strokeStyle = '#f1c40f';
-        ctx.lineWidth = 4;
-        ctx.strokeRect(selectedTile.x * TILE_SIZE, selectedTile.y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+    // Draw valid moves for selected unit
+    if (selectedUnit && selectedUnit.owner === 'player' && isPlayerTurn) {
+        const moves = getValidMoves(selectedUnit);
+        moves.forEach(move => {
+            ctx.fillStyle = 'rgba(241, 196, 15, 0.3)';
+            ctx.fillRect(move.x * TILE_SIZE, move.y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+            
+            ctx.strokeStyle = '#f1c40f';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(move.x * TILE_SIZE, move.y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+        });
     }
 
     // Draw Units
     units.forEach(unit => {
+        if (fogOfWar[unit.y][unit.x] && unit.owner === 'ai') return;
+        
         const cx = unit.x * TILE_SIZE + TILE_SIZE / 2;
         const cy = unit.y * TILE_SIZE + TILE_SIZE / 2;
         const radius = TILE_SIZE / 3;
@@ -206,12 +487,18 @@ function draw() {
         ctx.fillStyle = unit.color;
         ctx.fill();
 
-        // Unit Border
-        ctx.lineWidth = 2;
-        ctx.strokeStyle = '#fff';
-        ctx.stroke();
+        // Selection highlight
+        if (selectedUnit === unit) {
+            ctx.strokeStyle = '#f1c40f';
+            ctx.lineWidth = 3;
+            ctx.stroke();
+        } else {
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        }
 
-        // Moves Indicator (Dot in center if has moves)
+        // Moves indicator
         if (unit.moves > 0) {
             ctx.beginPath();
             ctx.arc(cx, cy, 4, 0, Math.PI * 2);
@@ -221,40 +508,48 @@ function draw() {
 
         // HP Bar
         const barWidth = TILE_SIZE - 10;
-        const barHeight = 6;
+        const barHeight = 5;
         const barX = unit.x * TILE_SIZE + 5;
-        const barY = unit.y * TILE_SIZE - 8;
+        const barY = unit.y * TILE_SIZE - 6;
         
-        // Background
         ctx.fillStyle = '#c0392b';
         ctx.fillRect(barX, barY, barWidth, barHeight);
         
-        // Health
         const hpPercent = Math.max(0, unit.hp / unit.maxHp);
-        ctx.fillStyle = '#2ecc71';
+        ctx.fillStyle = hpPercent > 0.5 ? '#2ecc71' : (hpPercent > 0.25 ? '#f39c12' : '#e74c3c');
         ctx.fillRect(barX, barY, barWidth * hpPercent, barHeight);
         
-        // Border
         ctx.strokeStyle = '#000';
         ctx.lineWidth = 1;
         ctx.strokeRect(barX, barY, barWidth, barHeight);
 
-        // HP Text
+        // Unit type indicator
         ctx.fillStyle = '#fff';
-        ctx.font = '10px Arial';
-        ctx.strokeText(unit.hp, cx, barY - 2);
-        ctx.fillText(unit.hp, cx, barY - 2);
+        ctx.font = 'bold 8px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText(unit.type[0], cx, cy + radius + 10);
+    });
+
+    // Draw Particles
+    particles.forEach(p => {
+        ctx.globalAlpha = p.life / p.maxLife;
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1.0;
     });
 
     // Draw Floating Texts
     floatingTexts.forEach(ft => {
         ctx.globalAlpha = ft.life / ft.maxLife;
         ctx.fillStyle = ft.color;
-        ctx.font = 'bold 20px Arial';
+        ctx.font = 'bold 16px Arial';
         ctx.strokeStyle = 'black';
         ctx.lineWidth = 3;
-        ctx.strokeText(ft.text, ft.x * TILE_SIZE + TILE_SIZE/2, ft.y * TILE_SIZE + TILE_SIZE/2);
-        ctx.fillText(ft.text, ft.x * TILE_SIZE + TILE_SIZE/2, ft.y * TILE_SIZE + TILE_SIZE/2);
+        ctx.textAlign = 'center';
+        ctx.strokeText(ft.text, ft.x, ft.y);
+        ctx.fillText(ft.text, ft.x, ft.y);
         ctx.globalAlpha = 1.0;
     });
 }
@@ -275,63 +570,155 @@ canvas.addEventListener('click', (e) => {
 
 function handleTileClick(x, y) {
     const clickedTile = map[y][x];
-    const playerUnit = units.find(u => u.owner === 'player');
+    const clickedUnit = units.find(u => u.x === x && u.y === y && u.owner === 'player');
+    const clickedCity = cities.find(c => c.x === x && c.y === y && c.owner === 'player');
     
-    // Select tile
-    selectedTile = clickedTile;
-    updateInfoPanel(clickedTile);
+    updateInfoPanel(clickedTile, clickedUnit, clickedCity);
 
-    if (!playerUnit) return; // Should not happen if game is running
-
-    // Move Logic
-    const dx = Math.abs(playerUnit.x - x);
-    const dy = Math.abs(playerUnit.y - y);
-    const isAdjacent = (dx === 1 && dy === 0) || (dx === 0 && dy === 1);
-
-    if (isAdjacent && playerUnit.moves > 0 && clickedTile.terrain !== TERRAIN.WATER) {
-        attemptMove(playerUnit, x, y);
+    // Select unit
+    if (clickedUnit && clickedUnit.moves > 0) {
+        selectedUnit = clickedUnit;
+        playSound(523, 0.05);
+        return;
     }
+
+    // Move selected unit
+    if (selectedUnit && selectedUnit.moves > 0) {
+        const validMoves = getValidMoves(selectedUnit);
+        const isValidMove = validMoves.some(m => m.x === x && m.y === y);
+        
+        if (isValidMove) {
+            attemptMove(selectedUnit, x, y);
+        }
+    }
+}
+
+function getValidMoves(unit) {
+    const moves = [];
+    const range = unit.moves;
+    
+    for (let dy = -range; dy <= range; dy++) {
+        for (let dx = -range; dx <= range; dx++) {
+            if (Math.abs(dx) + Math.abs(dy) > range) continue;
+            if (dx === 0 && dy === 0) continue;
+            
+            const nx = unit.x + dx;
+            const ny = unit.y + dy;
+            
+            if (nx < 0 || nx >= GRID_SIZE || ny < 0 || ny >= GRID_SIZE) continue;
+            
+            const terrain = map[ny][nx].terrain;
+            if (terrain === TERRAIN.WATER || terrain === TERRAIN.MOUNTAIN) continue;
+            
+            moves.push({ x: nx, y: ny });
+        }
+    }
+    
+    return moves;
 }
 
 function attemptMove(unit, targetX, targetY) {
     const enemy = units.find(u => u.x === targetX && u.y === targetY && u.owner !== unit.owner);
+    const enemyCity = cities.find(c => c.x === targetX && c.y === targetY && c.owner !== unit.owner);
     
     if (enemy) {
         resolveCombat(unit, enemy);
+        playSound(220, 0.2, 'sawtooth');
+    } else if (enemyCity) {
+        // Capture city
+        captureCity(unit, enemyCity);
+    } else if (unit.canSettle && !cities.find(c => c.x === targetX && c.y === targetY)) {
+        // Settle new city
+        settleCity(unit, targetX, targetY);
     } else {
         unit.x = targetX;
         unit.y = targetY;
         unit.moves--;
+        playSound(392, 0.1);
+        createParticle(targetX, targetY, unit.color);
+        updateVision();
         checkWinCondition();
     }
 }
 
-function resolveCombat(attacker, defender) {
-    // 1. Calculate Damage to Defender
-    // Base avg 10. 
-    // Tundra: avg 12. Rainforest: avg 8.
+function settleCity(settler, x, y) {
+    cities.push({
+        x, y,
+        owner: settler.owner,
+        color: settler.owner === 'player' ? '#00ffff' : '#e74c3c',
+        name: settler.owner === 'player' ? 'New City' : 'Enemy Outpost',
+        production: null,
+        productionProgress: 0
+    });
     
-    const defenderTile = map[defender.y][defender.x];
-    let meanDamage = 10;
+    units = units.filter(u => u !== settler);
     
-    if (defenderTile.terrain.type === 'tundra') meanDamage = 12;
-    if (defenderTile.terrain.type === 'rainforest') meanDamage = 8;
+    floatingTexts.push({
+        x: x * TILE_SIZE + TILE_SIZE/2,
+        y: y * TILE_SIZE + TILE_SIZE/2,
+        text: 'City Founded!',
+        color: '#f1c40f',
+        life: 60,
+        maxLife: 60
+    });
     
-    const damageToDefender = Math.max(0, randomNormal(meanDamage, 2)); // StdDev 2 for some variance
-    
-    // 2. Calculate Damage to Attacker
-    // "always around 10"
-    const damageToAttacker = Math.max(0, randomNormal(10, 2));
+    playSound(659, 0.3);
+    createParticle(x, y, '#f1c40f');
+    updateVision();
+}
 
-    // 3. Apply Damage
+function captureCity(unit, city) {
+    const oldOwner = city.owner;
+    city.owner = unit.owner;
+    city.color = unit.owner === 'player' ? '#00ffff' : '#e74c3c';
+    
+    floatingTexts.push({
+        x: city.x * TILE_SIZE + TILE_SIZE/2,
+        y: city.y * TILE_SIZE + TILE_SIZE/2,
+        text: 'Captured!',
+        color: '#f1c40f',
+        life: 60,
+        maxLife: 60
+    });
+    
+    unit.x = city.x;
+    unit.y = city.y;
+    unit.moves = 0;
+    
+    playSound(880, 0.4);
+    createParticle(city.x, city.y, '#f1c40f');
+    updateVision();
+    
+    if (oldOwner === 'ai' && cities.filter(c => c.owner === 'ai').length === 0) {
+        endGame("VICTORY!", "victory");
+    } else if (oldOwner === 'player' && cities.filter(c => c.owner === 'player').length === 0) {
+        endGame("DEFEAT!", "defeat");
+    }
+}
+
+function resolveCombat(attacker, defender) {
+    const defenderTerrain = map[defender.y][defender.x].terrain;
+    
+    let attackDamage = attacker.attack;
+    let defenseDamage = defender.attack;
+    
+    // Terrain bonuses
+    if (defenderTerrain.type === 'rainforest') {
+        defenseDamage += 5; // Defender bonus in forest
+    } else if (defenderTerrain.type === 'mountain') {
+        defenseDamage += 8;
+    }
+    
+    // Calculate damage with variance
+    const damageToDefender = Math.max(0, randomNormal(attackDamage, 3));
+    const damageToAttacker = Math.max(0, randomNormal(defenseDamage, 3));
+
     defender.hp -= damageToDefender;
     attacker.hp -= damageToAttacker;
     
-    // 4. Visuals (Floating Text)
-    // Damage numbers
     floatingTexts.push({
-        x: defender.x,
-        y: defender.y,
+        x: defender.x * TILE_SIZE + TILE_SIZE/2,
+        y: defender.y * TILE_SIZE + TILE_SIZE/2,
         text: `-${damageToDefender}`,
         color: '#e74c3c',
         life: 60,
@@ -339,73 +726,77 @@ function resolveCombat(attacker, defender) {
     });
     
     floatingTexts.push({
-        x: attacker.x,
-        y: attacker.y,
+        x: attacker.x * TILE_SIZE + TILE_SIZE/2,
+        y: attacker.y * TILE_SIZE + TILE_SIZE/2,
         text: `-${damageToAttacker}`,
         color: '#e74c3c',
         life: 60,
         maxLife: 60
     });
     
-    // Attacker loses move
-    attacker.moves--;
+    createParticle(defender.x, defender.y, '#e74c3c');
+    createParticle(attacker.x, attacker.y, '#e74c3c');
+    
+    attacker.moves = 0;
 
-    // 5. Check Death
     if (attacker.hp <= 0 || defender.hp <= 0) {
-        // Find who died
         if (attacker.hp <= 0 && defender.hp <= 0) {
-             // Both died - draw? or who died first?
-             // Prompt says: "if either unit is killed that player loses"
-             // If both die, maybe just end game based on who attacked? 
-             // Let's say if Player dies, Player loses.
-             if (attacker.owner === 'player') endGame("YOU DIED!", "defeat");
-             else endGame("YOU WON!", "victory");
+            if (attacker.owner === 'player') endGame("MUTUAL DESTRUCTION!", "defeat");
+            else endGame("MUTUAL DESTRUCTION!", "victory");
         } else if (attacker.hp <= 0) {
-             endGame(attacker.owner === 'player' ? "YOU DIED!" : "YOU WON!", attacker.owner === 'player' ? "defeat" : "victory");
+            if (attacker.owner === 'player') endGame("UNIT LOST!", "defeat");
         } else if (defender.hp <= 0) {
-             endGame(defender.owner === 'player' ? "YOU DIED!" : "YOU WON!", defender.owner === 'player' ? "defeat" : "victory");
+            if (defender.owner === 'player') endGame("UNIT LOST!", "defeat");
+            else {
+                attacker.x = defender.x;
+                attacker.y = defender.y;
+            }
         }
         
-        // Remove dead units
         units = units.filter(u => u.hp > 0);
+        updateVision();
+        
+        if (units.filter(u => u.owner === 'player').length === 0) {
+            endGame("ALL UNITS LOST!", "defeat");
+        } else if (units.filter(u => u.owner === 'ai').length === 0) {
+            endGame("ENEMY DEFEATED!", "victory");
+        }
     }
 }
 
 // --- GAME LOGIC ---
 
 function checkWinCondition() {
-    const playerUnit = units.find(u => u.owner === 'player');
-    const aiUnit = units.find(u => u.owner === 'ai');
+    const playerCities = cities.filter(c => c.owner === 'player');
+    const aiCities = cities.filter(c => c.owner === 'ai');
     
-    if (!playerUnit || !aiUnit) return; // Handled in combat resolution
-
-    const playerCity = cities.find(c => c.owner === 'player');
-    const aiCity = cities.find(c => c.owner === 'ai');
-
-    if (playerUnit.x === aiCity.x && playerUnit.y === aiCity.y) {
-        endGame("CITY CAPTURED!", "victory");
-    } else if (aiUnit.x === playerCity.x && aiUnit.y === playerCity.y) {
-        endGame("CITY LOST!", "defeat");
+    if (aiCities.length === 0) {
+        endGame("VICTORY!", "victory");
+    } else if (playerCities.length === 0) {
+        endGame("DEFEAT!", "defeat");
     }
 }
 
 function endGame(message, type) {
-    if (gameOver) return; // Prevent double ending
+    if (gameOver) return;
     gameOver = true;
     const color = type === 'victory' ? '#2ecc71' : '#e74c3c';
     
-    // One final draw to show dead units removed or HP updated
-    draw(); 
+    playSound(type === 'victory' ? 523 : 220, 0.5);
     
-    // Overlay text on canvas
-    setTimeout(() => { // Slight delay to let animation finish a frame
-        ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    draw();
+    
+    setTimeout(() => {
+        ctx.fillStyle = 'rgba(0,0,0,0.8)';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         
         ctx.fillStyle = color;
-        ctx.font = '60px "Press Start 2P"';
+        ctx.font = 'bold 48px Arial';
         ctx.textAlign = 'center';
-        ctx.fillText(type === 'victory' ? 'VICTORY' : 'DEFEAT', canvas.width/2, canvas.height/2);
+        ctx.strokeStyle = 'black';
+        ctx.lineWidth = 5;
+        ctx.strokeText(message, canvas.width/2, canvas.height/2);
+        ctx.fillText(message, canvas.width/2, canvas.height/2);
         
         playerDisplay.textContent = message;
         playerDisplay.style.color = color;
@@ -415,20 +806,23 @@ function endGame(message, type) {
     }, 100);
 }
 
-function updateInfoPanel(tile) {
+function updateInfoPanel(tile, unit, city) {
     let content = `
         <p><strong>Pos:</strong> (${tile.x}, ${tile.y})</p>
-        <p><strong>Terrain:</strong> <span style="color:${tile.terrain.color}; text-shadow: 1px 1px 0 #000;">${tile.terrain.label}</span></p>
+        <p><strong>Terrain:</strong> <span style="color:${tile.terrain.color}">${tile.terrain.label}</span></p>
+        <p><strong>Food:</strong> ${tile.terrain.foodYield} <strong>Gold:</strong> ${tile.terrain.goldYield}</p>
     `;
 
-    // Check for units/cities
-    const unit = units.find(u => u.x === tile.x && u.y === tile.y);
-    const city = cities.find(c => c.x === tile.x && c.y === tile.y);
-
-    if (city) content += `<p><strong>City:</strong> ${city.owner.toUpperCase()}</p>`;
+    if (city) {
+        content += `<p><strong>City:</strong> ${city.name}</p>`;
+        content += `<p><strong>Owner:</strong> ${city.owner.toUpperCase()}</p>`;
+    }
+    
     if (unit) {
-        content += `<p><strong>Unit:</strong> ${unit.owner.toUpperCase()}</p>`;
+        content += `<p><strong>Unit:</strong> ${unit.name}</p>`;
         content += `<p><strong>HP:</strong> ${unit.hp}/${unit.maxHp}</p>`;
+        content += `<p><strong>Moves:</strong> ${unit.moves}/${unit.maxMoves}</p>`;
+        content += `<p><strong>Attack:</strong> ${unit.attack} <strong>Defense:</strong> ${unit.defense}</p>`;
     }
 
     tileInfoDisplay.innerHTML = content;
@@ -436,78 +830,31 @@ function updateInfoPanel(tile) {
 
 function updateUI() {
     turnDisplay.textContent = `Turn: ${turn}`;
-    playerDisplay.textContent = isPlayerTurn ? "Player's Turn" : "AI Thinking...";
+    playerDisplay.textContent = isPlayerTurn ? "Your Turn" : "AI Thinking...";
     playerDisplay.className = isPlayerTurn ? "player-turn" : "enemy-turn";
     endTurnBtn.disabled = !isPlayerTurn || gameOver;
+    
+    if (goldDisplay) goldDisplay.textContent = `Gold: ${playerGold}`;
+    if (foodDisplay) foodDisplay.textContent = `Food: ${playerFood}`;
 }
 
-// --- TURN SYSTEM ---
-
-endTurnBtn.addEventListener('click', () => {
-    if (!isPlayerTurn || gameOver) return;
+function collectResources(owner) {
+    let gold = 0;
+    let food = 0;
     
-    isPlayerTurn = false;
-    updateUI();
-    
-    setTimeout(aiTurn, 1000); // Small delay for "thinking"
-});
-
-function aiTurn() {
-    if (gameOver) return;
-
-    const aiUnit = units.find(u => u.owner === 'ai');
-    const playerUnit = units.find(u => u.owner === 'player');
-    const playerCity = cities.find(c => c.owner === 'player');
-    
-    if (!aiUnit) return; // AI dead
-
-    // AI LOGIC: 
-    // 1. If can attack player, do it (aggressive)
-    // 2. Else move towards city
-    
-    const moves = [
-        { x: aiUnit.x, y: aiUnit.y - 1 }, // Up
-        { x: aiUnit.x, y: aiUnit.y + 1 }, // Down
-        { x: aiUnit.x - 1, y: aiUnit.y }, // Left
-        { x: aiUnit.x + 1, y: aiUnit.y }  // Right
-    ];
-
-    let bestMove = null;
-    let minDist = Infinity;
-    let attackMove = null;
-
-    for (let move of moves) {
-        // Boundary Check
-        if (move.x < 0 || move.x >= GRID_SIZE || move.y < 0 || move.y >= GRID_SIZE) continue;
+    cities.filter(c => c.owner === owner).forEach(city => {
+        const tile = map[city.y][city.x];
+        gold += tile.terrain.goldYield + 5; // Base city income
+        food += tile.terrain.foodYield + 3;
         
-        // Water Check
-        if (map[move.y][move.x].terrain === TERRAIN.WATER) continue;
-
-        // Check if player is here
-        if (playerUnit && move.x === playerUnit.x && move.y === playerUnit.y) {
-            attackMove = move;
-            break; // Always prioritize attack
+        // Check surrounding tiles
+        for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+                const nx = city.x + dx;
+                const ny = city.y + dy;
+                if (nx >= 0 && nx < GRID_SIZE && ny >= 0 && ny < GRID_SIZE) {
+                    gold += map[ny][nx].terrain.goldYield;
+                    food += map[ny][nx].terrain.foodYield;
+                }
+            }
         }
-
-        // Calculate distance to target (City)
-        const dist = Math.abs(move.x - playerCity.x) + Math.abs(move.y - playerCity.y);
-        
-        if (dist < minDist) {
-            minDist = dist;
-            bestMove = move;
-        }
-    }
-
-    if (attackMove) {
-        attemptMove(aiUnit, attackMove.x, attackMove.y);
-    } else if (bestMove) {
-        attemptMove(aiUnit, bestMove.x, bestMove.y);
-    } else {
-        console.log("AI stuck!");
-    }
-
-    if (gameOver) return;
-
-    // End AI Turn
-    turn++;
-    isPlayer
