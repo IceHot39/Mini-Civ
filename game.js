@@ -1,96 +1,4 @@
-function showStartMenu() {
-    initDOM();
-    gameStarted = false;
-    difficulty = 'easy';
-    numAIs = 1;
-    
-    drawStartMenu();
-    canvas.onclick = handleStartClick;
-}
-
-function drawStartMenu() {
-    ctx.fillStyle = '#1a252f';
-    ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
-    
-    ctx.fillStyle = '#f1c40f';
-    ctx.font = 'bold 36px Arial';
-    ctx.textAlign = 'center';
-    ctx.fillText('MINI CIV', CANVAS_WIDTH/2, 100);
-    
-    // Opponents
-    ctx.fillStyle = '#ecf0f1';
-    ctx.font = '18px Arial';
-    ctx.fillText('Opponents:', CANVAS_WIDTH/2, 170);
-    
-    ctx.fillStyle = numAIs === 1 ? '#27ae60' : '#444';
-    ctx.fillRect(CANVAS_WIDTH/2 - 130, 190, 120, 40);
-    ctx.fillStyle = numAIs === 2 ? '#27ae60' : '#444';
-    ctx.fillRect(CANVAS_WIDTH/2 + 10, 190, 120, 40);
-    
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 16px Arial';
-    ctx.fillText('1 AI', CANVAS_WIDTH/2 - 70, 215);
-    ctx.fillText('2 AIs', CANVAS_WIDTH/2 + 70, 215);
-    
-    // Difficulty
-    ctx.fillStyle = '#ecf0f1';
-    ctx.font = '18px Arial';
-    ctx.fillText('Difficulty:', CANVAS_WIDTH/2, 280);
-    
-    ctx.fillStyle = difficulty === 'easy' ? '#27ae60' : '#444';
-    ctx.fillRect(CANVAS_WIDTH/2 - 195, 300, 120, 40);
-    ctx.fillStyle = difficulty === 'normal' ? '#e67e22' : '#444';
-    ctx.fillRect(CANVAS_WIDTH/2 - 60, 300, 120, 40);
-    ctx.fillStyle = difficulty === 'hard' ? '#c0392b' : '#444';
-    ctx.fillRect(CANVAS_WIDTH/2 + 75, 300, 120, 40);
-    
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 14px Arial';
-    ctx.fillText('Easy', CANVAS_WIDTH/2 - 135, 325);
-    ctx.fillText('Normal', CANVAS_WIDTH/2, 325);
-    ctx.fillText('Hard', CANVAS_WIDTH/2 + 135, 325);
-    
-    // Difficulty descriptions
-    ctx.fillStyle = '#95a5a6';
-    ctx.font = '12px Arial';
-    if (difficulty === 'easy') ctx.fillText('Standard game', CANVAS_WIDTH/2, 365);
-    else if (difficulty === 'normal') ctx.fillText('AI gets +15% combat bonus', CANVAS_WIDTH/2, 365);
-    else ctx.fillText('AI +15% combat & you train slower (4 turns)', CANVAS_WIDTH/2, 365);
-    
-    // Start button
-    ctx.fillStyle = '#3498db';
-    ctx.fillRect(CANVAS_WIDTH/2 - 80, 410, 160, 50);
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 20px Arial';
-    ctx.fillText('START', CANVAS_WIDTH/2, 442);
-    
-    ctx.font = '12px Arial';
-    ctx.fillStyle = '#95a5a6';
-    ctx.fillText('Capture enemy cities to win!', CANVAS_WIDTH/2, 500);
-}
-
-function handleStartClick(e) {
-    if (gameStarted) return;
-    const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    
-    // Opponent buttons (y: 190-230)
-    if (y >= 190 && y <= 230) {
-        if (x >= CANVAS_WIDTH/2 - 130 && x <= CANVAS_WIDTH/2 - 10) { numAIs = 1; drawStartMenu(); }
-        else if (x >= CANVAS_WIDTH/2 + 10 && x <= CANVAS_WIDTH/2 + 130) { numAIs = 2; drawStartMenu(); }
-    }
-    // Difficulty buttons (y: 300-340)
-    if (y >= 300 && y <= 340) {
-        if (x >= CANVAS_WIDTH/2 - 195 && x <= CANVAS_WIDTH/2 - 75) { difficulty = 'easy'; drawStartMenu(); }
-        else if (x >= CANVAS_WIDTH/2 - 60 && x <= CANVAS_WIDTH/2 + 60) { difficulty = 'normal'; drawStartMenu(); }
-        else if (x >= CANVAS_WIDTH/2 + 75 && x <= CANVAS_WIDTH/2 + 195) { difficulty = 'hard'; drawStartMenu(); }
-    }
-    // Start button (y: 410-460)
-    if (y >= 410 && y <= 460 && x >= CANVAS_WIDTH/2 - 80 && x <= CANVAS_WIDTH/2 + 80) {
-        startGame();
-    }
-} // CONFIGURATION
+// CONFIGURATION
 const GRID_RADIUS = 5;
 const HEX_SIZE = 34;
 const CANVAS_WIDTH = 700;
@@ -212,35 +120,72 @@ function canReachAdjacent(unit, targetQ, targetR) {
 function showStartMenu() {
     initDOM();
     gameStarted = false;
+    difficulty = 'easy';
+    numAIs = 1;
     
+    drawStartMenu();
+    canvas.onclick = handleStartClick;
+}
+
+function drawStartMenu() {
     ctx.fillStyle = '#1a252f';
     ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
     
     ctx.fillStyle = '#f1c40f';
     ctx.font = 'bold 36px Arial';
     ctx.textAlign = 'center';
-    ctx.fillText('MINI CIV', CANVAS_WIDTH/2, 200);
+    ctx.fillText('MINI CIV', CANVAS_WIDTH/2, 100);
     
+    // Opponents
     ctx.fillStyle = '#ecf0f1';
-    ctx.font = '20px Arial';
-    ctx.fillText('Choose number of opponents:', CANVAS_WIDTH/2, 280);
+    ctx.font = '18px Arial';
+    ctx.fillText('Opponents:', CANVAS_WIDTH/2, 170);
     
-    // Draw buttons
-    ctx.fillStyle = '#27ae60';
-    ctx.fillRect(CANVAS_WIDTH/2 - 150, 320, 120, 50);
-    ctx.fillStyle = '#e67e22';
-    ctx.fillRect(CANVAS_WIDTH/2 + 30, 320, 120, 50);
+    ctx.fillStyle = numAIs === 1 ? '#27ae60' : '#444';
+    ctx.fillRect(CANVAS_WIDTH/2 - 130, 190, 120, 40);
+    ctx.fillStyle = numAIs === 2 ? '#27ae60' : '#444';
+    ctx.fillRect(CANVAS_WIDTH/2 + 10, 190, 120, 40);
     
     ctx.fillStyle = '#fff';
-    ctx.font = 'bold 18px Arial';
-    ctx.fillText('1 AI', CANVAS_WIDTH/2 - 90, 352);
-    ctx.fillText('2 AIs', CANVAS_WIDTH/2 + 90, 352);
+    ctx.font = 'bold 16px Arial';
+    ctx.fillText('1 AI', CANVAS_WIDTH/2 - 70, 215);
+    ctx.fillText('2 AIs', CANVAS_WIDTH/2 + 70, 215);
     
-    ctx.font = '14px Arial';
+    // Difficulty
+    ctx.fillStyle = '#ecf0f1';
+    ctx.font = '18px Arial';
+    ctx.fillText('Difficulty:', CANVAS_WIDTH/2, 280);
+    
+    ctx.fillStyle = difficulty === 'easy' ? '#27ae60' : '#444';
+    ctx.fillRect(CANVAS_WIDTH/2 - 195, 300, 120, 40);
+    ctx.fillStyle = difficulty === 'normal' ? '#e67e22' : '#444';
+    ctx.fillRect(CANVAS_WIDTH/2 - 60, 300, 120, 40);
+    ctx.fillStyle = difficulty === 'hard' ? '#c0392b' : '#444';
+    ctx.fillRect(CANVAS_WIDTH/2 + 75, 300, 120, 40);
+    
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 14px Arial';
+    ctx.fillText('Easy', CANVAS_WIDTH/2 - 135, 325);
+    ctx.fillText('Normal', CANVAS_WIDTH/2, 325);
+    ctx.fillText('Hard', CANVAS_WIDTH/2 + 135, 325);
+    
+    // Difficulty descriptions
     ctx.fillStyle = '#95a5a6';
-    ctx.fillText('Capture enemy cities to win!', CANVAS_WIDTH/2, 420);
+    ctx.font = '12px Arial';
+    if (difficulty === 'easy') ctx.fillText('Standard game', CANVAS_WIDTH/2, 365);
+    else if (difficulty === 'normal') ctx.fillText('AI gets +15% combat bonus', CANVAS_WIDTH/2, 365);
+    else ctx.fillText('AI +15% combat & you train slower (4 turns)', CANVAS_WIDTH/2, 365);
     
-    canvas.onclick = handleStartClick;
+    // Start button
+    ctx.fillStyle = '#3498db';
+    ctx.fillRect(CANVAS_WIDTH/2 - 80, 410, 160, 50);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 20px Arial';
+    ctx.fillText('START', CANVAS_WIDTH/2, 442);
+    
+    ctx.font = '12px Arial';
+    ctx.fillStyle = '#95a5a6';
+    ctx.fillText('Capture enemy cities to win!', CANVAS_WIDTH/2, 500);
 }
 
 function handleStartClick(e) {
@@ -249,14 +194,20 @@ function handleStartClick(e) {
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     
-    if (y >= 320 && y <= 370) {
-        if (x >= CANVAS_WIDTH/2 - 150 && x <= CANVAS_WIDTH/2 - 30) {
-            numAIs = 1;
-            startGame();
-        } else if (x >= CANVAS_WIDTH/2 + 30 && x <= CANVAS_WIDTH/2 + 150) {
-            numAIs = 2;
-            startGame();
-        }
+    // Opponent buttons (y: 190-230)
+    if (y >= 190 && y <= 230) {
+        if (x >= CANVAS_WIDTH/2 - 130 && x <= CANVAS_WIDTH/2 - 10) { numAIs = 1; drawStartMenu(); }
+        else if (x >= CANVAS_WIDTH/2 + 10 && x <= CANVAS_WIDTH/2 + 130) { numAIs = 2; drawStartMenu(); }
+    }
+    // Difficulty buttons (y: 300-340)
+    if (y >= 300 && y <= 340) {
+        if (x >= CANVAS_WIDTH/2 - 195 && x <= CANVAS_WIDTH/2 - 75) { difficulty = 'easy'; drawStartMenu(); }
+        else if (x >= CANVAS_WIDTH/2 - 60 && x <= CANVAS_WIDTH/2 + 60) { difficulty = 'normal'; drawStartMenu(); }
+        else if (x >= CANVAS_WIDTH/2 + 75 && x <= CANVAS_WIDTH/2 + 195) { difficulty = 'hard'; drawStartMenu(); }
+    }
+    // Start button (y: 410-460)
+    if (y >= 410 && y <= 460 && x >= CANVAS_WIDTH/2 - 80 && x <= CANVAS_WIDTH/2 + 80) {
+        startGame();
     }
 }
 
@@ -343,15 +294,9 @@ function updateVision() {
 function spawnEntities() {
     const allHexes = Object.values(map).filter(h => !h.terrain.impassable);
     
-    // Spawn in thirds of the map (equidistant positions)
-    // Player at bottom (angle 270 degrees from center)
-    // AI1 at top-right (angle 30 degrees)
-    // AI2 at top-left (angle 150 degrees)
-    
     function getHexNearAngle(angle, radius) {
         const targetQ = Math.round(Math.cos(angle * Math.PI / 180) * radius);
         const targetR = Math.round(Math.sin(angle * Math.PI / 180) * radius);
-        // Find closest valid hex
         let best = null, minD = Infinity;
         allHexes.forEach(h => {
             const d = hexDistance(h.q, h.r, targetQ, targetR);
@@ -363,11 +308,11 @@ function spawnEntities() {
     const spawnRadius = GRID_RADIUS - 1;
     
     // Player at bottom
-    const playerStart = getHexNearAngle(90, spawnRadius); // 90 = down in our coord system
+    const playerStart = getHexNearAngle(90, spawnRadius);
     cities.push({ q: playerStart.q, r: playerStart.r, owner: 'player', color: '#00ffff', name: 'Capital' });
     units.push(createUnit('WARRIOR', playerStart.q, playerStart.r, 'player'));
 
-    // AI 1 at top-right (120 degrees apart)
+    // AI 1 at top-right
     const ai1Start = getHexNearAngle(-30, spawnRadius);
     cities.push({ q: ai1Start.q, r: ai1Start.r, owner: 'ai1', color: '#e74c3c', name: 'Red City' });
     units.push(createUnit('WARRIOR', ai1Start.q, ai1Start.r, 'ai1'));
@@ -409,9 +354,10 @@ function setupUnitButtons() {
     
     Object.keys(UNIT_TYPES).forEach(typeName => {
         const type = UNIT_TYPES[typeName];
+        const trainTime = difficulty === 'hard' ? 4 : type.trainTime;
         const btn = document.createElement('button');
         btn.className = 'unit-btn';
-        btn.innerHTML = `${type.icon} ${type.name} (${type.trainTime}t)`;
+        btn.innerHTML = `${type.icon} ${type.name} (${trainTime}t)`;
         btn.onclick = () => queueUnit(typeName);
         controls.appendChild(btn);
     });
@@ -477,7 +423,6 @@ function randomNormal(mean, stdDev) {
 }
 
 function showFloatingText(x, y, text, color, forceShow = false) {
-    // Only show if in visible area or forceShow is true
     const hex = pixelToHex(x, y);
     if (!forceShow && !currentlyVisible[`${hex.q},${hex.r}`]) return;
     floatingTexts.push({ x, y, text, color, life: 60, maxLife: 60 });
@@ -576,7 +521,6 @@ function drawCity(city) {
     const pos = hexToPixel(city.q, city.r);
     const dark = !currentlyVisible[key];
     
-    // Draw gray background hex for city
     drawHex(pos.x, pos.y, HEX_SIZE);
     ctx.fillStyle = dark ? '#3a3a3a' : '#555555';
     ctx.fill();
@@ -693,7 +637,6 @@ function handleHexClick(q, r) {
 function getValidMoves(unit) {
     const moves = [];
     if (unit.maxMoves === 1) {
-        // Single move units - just check neighbors
         const neighbors = getHexNeighbors(unit.q, unit.r);
         for (const n of neighbors) {
             const tile = map[`${n.q},${n.r}`];
@@ -704,7 +647,6 @@ function getValidMoves(unit) {
             moves.push({ q: n.q, r: n.r });
         }
     } else {
-        // Knights - must pathfind through valid terrain
         const visited = new Set([`${unit.q},${unit.r}`]);
         const queue = [{ q: unit.q, r: unit.r, dist: 0 }];
         
@@ -724,7 +666,6 @@ function getValidMoves(unit) {
                 const occupant = units.find(u => u.q === n.q && u.r === n.r);
                 if (occupant && occupant.owner === unit.owner) continue;
                 
-                // Knight slowed by rainforest - can only move 1 into it
                 const newDist = current.dist + (tile.terrain.slowsKnight ? unit.maxMoves : 1);
                 
                 if (newDist <= unit.maxMoves) {
@@ -749,7 +690,6 @@ function getAttackTargets(unit) {
         const dist = hexDistance(unit.q, unit.r, tile.q, tile.r);
         if (dist === 0 || dist > unit.range) continue;
         
-        // Check line of sight - can't shoot over mountains or rainforest
         if (!hasLineOfSight(unit.q, unit.r, tile.q, tile.r)) continue;
         
         const enemy = units.find(u => u.q === tile.q && u.r === tile.r && u.owner !== unit.owner);
@@ -759,22 +699,18 @@ function getAttackTargets(unit) {
 }
 
 function hasLineOfSight(q1, r1, q2, r2) {
-    // Get hexes along the line between attacker and target
     const dist = hexDistance(q1, r1, q2, r2);
-    if (dist <= 1) return true; // Adjacent, always visible
+    if (dist <= 1) return true;
     
-    // Check intermediate hexes for blocking terrain
     for (let i = 1; i < dist; i++) {
         const t = i / dist;
-        // Lerp in cube coordinates
-        const s1 = -q1 - r1, s2 = -q2 - r2;
         const q = q1 + (q2 - q1) * t;
         const r = r1 + (r2 - r1) * t;
         const rounded = hexRound(q, r);
         
         const tile = map[`${rounded.q},${rounded.r}`];
         if (tile && (tile.terrain.type === 'mountain' || tile.terrain.type === 'rainforest')) {
-            return false; // Blocked
+            return false;
         }
     }
     return true;
@@ -819,21 +755,16 @@ function captureCity(unit, city) {
     const pos = hexToPixel(city.q, city.r);
     const oldOwner = city.owner;
     
-    // City is destroyed when captured
     cities = cities.filter(c => c !== city);
     
-    // Only show effects if visible to player
     if (currentlyVisible[`${city.q},${city.r}`]) {
         showFloatingText(pos.x, pos.y, 'City Destroyed!', '#f1c40f');
         createParticle(city.q, city.r, '#f1c40f');
     }
     
-    // Eliminate the player who lost their city
     if (oldOwner === 'player') {
-        // Player loses
         checkVictory();
     } else {
-        // AI eliminated - remove all their units too
         units = units.filter(u => u.owner !== oldOwner);
         checkVictory();
     }
@@ -985,8 +916,6 @@ function aiTurn(aiOwner) {
         const attackTargets = unit.rangedOnly ? [] : validMoves.filter(m => enemyUnits.find(e => e.q === m.q && e.r === m.r));
         const rangedTargets = unit.range > 1 ? getAttackTargets(unit) : [];
         
-        // === EVALUATE SITUATION ===
-        
         // Can I capture an enemy city this turn?
         const captureableCity = enemyCities.find(ec => validMoves.some(m => m.q === ec.q && m.r === ec.r) && !units.find(u => u.q === ec.q && u.r === ec.r && u.owner !== aiOwner));
         
@@ -1004,9 +933,9 @@ function aiTurn(aiOwner) {
         // Can I move to my city?
         const canMoveToCity = myCity && validMoves.some(m => m.q === myCity.q && m.r === myCity.r);
         
-        // === DECISION TREE (Human-like thinking) ===
+        // === DECISION TREE ===
         
-        // 1. CAPTURE ENEMY CITY IF POSSIBLE (Winning move!)
+        // 1. CAPTURE ENEMY CITY IF POSSIBLE
         if (captureableCity && !unit.rangedOnly) {
             attemptMove(unit, captureableCity.q, captureableCity.r);
             return;
@@ -1020,17 +949,14 @@ function aiTurn(aiOwner) {
         
         // 3. ATTACK THREATENING UNIT IF CITY THREATENED
         if (cityThreat && myCity) {
-            // Ranged attack
             if (rangedTargets.find(t => t.q === cityThreat.q && t.r === cityThreat.r)) {
                 rangedAttack(unit, cityThreat);
                 return;
             }
-            // Melee attack
             if (!unit.rangedOnly && attackTargets.find(m => m.q === cityThreat.q && m.r === cityThreat.r)) {
                 attemptMove(unit, cityThreat.q, cityThreat.r);
                 return;
             }
-            // Move towards threat
             let best = null, minD = Infinity;
             validMoves.forEach(m => {
                 const d = hexDistance(m.q, m.r, cityThreat.q, cityThreat.r);
@@ -1042,9 +968,8 @@ function aiTurn(aiOwner) {
             }
         }
         
-        // 4. ATTACK ANY ENEMY IN RANGE (Opportunistic)
+        // 4. ATTACK ANY ENEMY IN RANGE
         if (rangedTargets.length > 0) {
-            // Prefer low HP targets
             let bestTarget = null, lowestHp = Infinity;
             rangedTargets.forEach(t => {
                 const enemy = units.find(u => u.q === t.q && u.r === t.r);
@@ -1054,7 +979,6 @@ function aiTurn(aiOwner) {
         }
         
         if (attackTargets.length > 0 && !unit.rangedOnly) {
-            // Prefer low HP targets
             let bestTarget = null, lowestHp = Infinity;
             attackTargets.forEach(m => {
                 const enemy = enemyUnits.find(e => e.q === m.q && e.r === m.r);
@@ -1063,25 +987,47 @@ function aiTurn(aiOwner) {
             if (bestTarget) { attemptMove(unit, bestTarget.q, bestTarget.r); return; }
         }
         
-        // 5. ADVANCE TOWARDS NEAREST ENEMY CITY (with random path variation)
+        // 5. ADVANCE TOWARDS NEAREST ENEMY CITY (with weighted random path selection)
         const targetCity = enemyCities.reduce((nearest, c) => {
             const d = hexDistance(unit.q, unit.r, c.q, c.r);
             return (!nearest || d < nearest.dist) ? { city: c, dist: d } : nearest;
         }, null);
         
         if (targetCity && validMoves.length > 0) {
-            // Find all moves that get us closer, then pick randomly for path variety
             const currentDist = hexDistance(unit.q, unit.r, targetCity.city.q, targetCity.city.r);
-            const goodMoves = validMoves.filter(m => {
-                if (unit.rangedOnly && enemyUnits.find(e => e.q === m.q && e.r === m.r)) return false;
+            
+            // Score all moves that get us closer
+            const scoredMoves = [];
+            validMoves.forEach(m => {
+                if (unit.rangedOnly && enemyUnits.find(e => e.q === m.q && e.r === m.r)) return;
                 const d = hexDistance(m.q, m.r, targetCity.city.q, targetCity.city.r);
-                return d < currentDist;
+                if (d < currentDist) {
+                    // Add some randomness to the score so units take different paths
+                    // Base score is inverse of distance (closer = better) plus random factor
+                    const score = (currentDist - d) + Math.random() * 0.8;
+                    scoredMoves.push({ move: m, score: score });
+                }
             });
             
-            if (goodMoves.length > 0) {
-                // Randomly pick from good moves for path variety
-                const chosen = goodMoves[Math.floor(Math.random() * goodMoves.length)];
-                attemptMove(unit, chosen.q, chosen.r);
+            if (scoredMoves.length > 0) {
+                // Sort by score and use weighted random selection
+                scoredMoves.sort((a, b) => b.score - a.score);
+                
+                // Pick from top moves with weighted probability
+                // This creates variety while still preferring good moves
+                let pick;
+                const rand = Math.random();
+                if (rand < 0.5 && scoredMoves.length >= 1) {
+                    pick = scoredMoves[0].move; // 50% best move
+                } else if (rand < 0.8 && scoredMoves.length >= 2) {
+                    pick = scoredMoves[1].move; // 30% second best
+                } else if (scoredMoves.length >= 3) {
+                    pick = scoredMoves[Math.floor(Math.random() * scoredMoves.length)].move; // 20% any good move
+                } else {
+                    pick = scoredMoves[Math.floor(Math.random() * scoredMoves.length)].move;
+                }
+                
+                attemptMove(unit, pick.q, pick.r);
                 return;
             }
             
