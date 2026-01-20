@@ -1,22 +1,25 @@
 // CONFIGURATION
-const GRID_SIZE = 12;
-const TILE_SIZE = 50;
-const CANVAS_SIZE = GRID_SIZE * TILE_SIZE;
+const GRID_SIZE = 10;
+const HEX_SIZE = 32;
+const HEX_WIDTH = HEX_SIZE * 2;
+const HEX_HEIGHT = Math.sqrt(3) * HEX_SIZE;
+const CANVAS_WIDTH = 650;
+const CANVAS_HEIGHT = 580;
 
-// TERRAIN DEFINITIONS
+// TERRAIN DEFINITIONS with defense bonuses (20% style)
 const TERRAIN = {
-    TUNDRA: { type: 'tundra', color: '#e8f4f8', label: 'Tundra' },
-    PLAINS: { type: 'plains', color: '#90c956', label: 'Plains' },
-    RAINFOREST: { type: 'rainforest', color: '#2d5a27', label: 'Rainforest', slowsKnight: true },
-    WATER: { type: 'water', color: '#2980b9', label: 'Water' },
-    MOUNTAIN: { type: 'mountain', color: '#6b7c85', label: 'Mountain' }
+    TUNDRA: { type: 'tundra', color: '#e8f4f8', label: 'Tundra', defenseBonus: 4 },
+    PLAINS: { type: 'plains', color: '#90c956', label: 'Plains', defenseBonus: 0 },
+    RAINFOREST: { type: 'rainforest', color: '#2d5a27', label: 'Rainforest', defenseBonus: 6, slowsKnight: true },
+    WATER: { type: 'water', color: '#2980b9', label: 'Water', defenseBonus: 0 },
+    MOUNTAIN: { type: 'mountain', color: '#6b7c85', label: 'Mountain', defenseBonus: 8 }
 };
 
-// UNIT TYPES
+// UNIT TYPES - Warriors stronger, Archers ranged only
 const UNIT_TYPES = {
-    WARRIOR: { name: 'Warrior', icon: '⚔', maxHp: 60, attack: 15, defense: 12, moves: 1, range: 1, trainTime: 3 },
-    ARCHER: { name: 'Archer', icon: '🏹', maxHp: 40, attack: 12, defense: 6, moves: 1, range: 2, trainTime: 3 },
-    KNIGHT: { name: 'Knight', icon: '🐴', maxHp: 50, attack: 10, defense: 10, moves: 2, range: 1, trainTime: 3 }
+    WARRIOR: { name: 'Warrior', icon: '⚔', maxHp: 70, attack: 18, defense: 14, moves: 1, range: 1, trainTime: 3 },
+    ARCHER: { name: 'Archer', icon: '🏹', maxHp: 40, attack: 14, defense: 6, moves: 1, range: 2, trainTime: 3, rangedOnly: true },
+    KNIGHT: { name: 'Knight', icon: '🐴', maxHp: 50, attack: 12, defense: 10, moves: 2, range: 1, trainTime: 3 }
 };
 
 // GAME STATE
@@ -29,9 +32,8 @@ let turn = 1;
 let isPlayerTurn = true;
 let selectedUnit = null;
 let gameOver = false;
-let fogOfWar = [];      // true = never seen (white fog)
-let explored = [];      // true = has been seen before
-let currentlyVisible = []; // true = can see right now
+let explored = [];
+let currentlyVisible = [];
 let trainingQueue = [];
 let aiTrainingQueue = [];
 
@@ -44,16 +46,66 @@ const tileInfoDisplay = document.getElementById('tile-info');
 const endTurnBtn = document.getElementById('end-turn-btn');
 const restartBtn = document.getElementById('restart-btn');
 
-// Fix canvas size
-canvas.width = CANVAS_SIZE;
-canvas.height = CANVAS_SIZE;
-canvas.style.width = CANVAS_SIZE + 'px';
-canvas.style.height = CANVAS_SIZE + 'px';
+canvas.width = CANVAS_WIDTH;
+canvas.height = CANVAS_HEIGHT;
+canvas.style.width = CANVAS_WIDTH + 'px';
+canvas.style.height = CANVAS_HEIGHT + 'px';
+
+// --- HEX MATH ---
+
+function hexToPixel(q, r) {
+    const x = HEX_SIZE * (3/2 * q) + 50;
+    const y = HEX_SIZE * (Math.sqrt(3)/2 * q + Math.sqrt(3) * r) + 50;
+    return { x, y };
+}
+
+function pixelToHex(px, py) {
+    const x = px - 50;
+    const y = py - 50;
+    const q = (2/3 * x) / HEX_SIZE;
+    const r = (-1/3 * x + Math.sqrt(3)/3 * y) / HEX_SIZE;
+    return hexRound(q, r);
+}
+
+function hexRound(q, r) {
+    const s = -q - r;
+    let rq = Math.round(q);
+    let rr = Math.round(r);
+    let rs = Math.round(s);
+    
+    const qDiff = Math.abs(rq - q);
+    const rDiff = Math.abs(rr - r);
+    const sDiff = Math.abs(rs - s);
+    
+    if (qDiff > rDiff && qDiff > sDiff) {
+        rq = -rr - rs;
+    } else if (rDiff > sDiff) {
+        rr = -rq - rs;
+    }
+    
+    return { q: rq, r: rr };
+}
+
+function hexDistance(q1, r1, q2, r2) {
+    return (Math.abs(q1 - q2) + Math.abs(q1 + r1 - q2 - r2) + Math.abs(r1 - r2)) / 2;
+}
+
+function getHexNeighbors(q, r) {
+    const directions = [
+        {q: 1, r: 0}, {q: 1, r: -1}, {q: 0, r: -1},
+        {q: -1, r: 0}, {q: -1, r: 1}, {q: 0, r: 1}
+    ];
+    return directions.map(d => ({ q: q + d.q, r: r + d.r }));
+}
+
+function isValidHex(q, r) {
+    return map[`${q},${r}`] !== undefined;
+}
 
 // --- INITIALIZATION ---
 
 function initGame() {
-    map = generateMap();
+    map = {};
     units = [];
     cities = [];
     floatingTexts = [];
@@ -64,8 +116,10 @@ function initGame() {
     selectedUnit = null;
     trainingQueue = [];
     aiTrainingQueue = [];
+    explored = {};
+    currentlyVisible = {};
     
-    initFogOfWar();
+    generateHexMap();
     spawnEntities();
     updateVision();
     updateUI();
@@ -78,11 +132,9 @@ function initGame() {
     restartBtn.style.display = 'none';
 }
 
-function generateMap() {
-    let newMap = [];
-    for (let y = 0; y < GRID_SIZE; y++) {
-        let row = [];
-        for (let x = 0; x < GRID_SIZE; x++) {
+function generateHexMap() {
+    for (let r = 0; r < GRID_SIZE; r++) {
+        for (let q = 0; q < GRID_SIZE; q++) {
             const rand = Math.random();
             let terrain;
             
@@ -92,39 +144,13 @@ function generateMap() {
             else if (rand < 0.92) terrain = TERRAIN.TUNDRA;
             else terrain = TERRAIN.MOUNTAIN;
 
-            row.push({ x, y, terrain, seed: Math.random() * 1000 });
+            map[`${q},${r}`] = { q, r, terrain, seed: Math.random() * 1000 };
         }
-        newMap.push(row);
-    }
-    return newMap;
-}
-
-function initFogOfWar() {
-    fogOfWar = [];
-    explored = [];
-    currentlyVisible = [];
-    for (let y = 0; y < GRID_SIZE; y++) {
-        let fogRow = [];
-        let expRow = [];
-        let visRow = [];
-        for (let x = 0; x < GRID_SIZE; x++) {
-            fogRow.push(true);
-            expRow.push(false);
-            visRow.push(false);
-        }
-        fogOfWar.push(fogRow);
-        explored.push(expRow);
-        currentlyVisible.push(visRow);
     }
 }
 
 function updateVision() {
-    // Reset current visibility
-    for (let y = 0; y < GRID_SIZE; y++) {
-        for (let x = 0; x < GRID_SIZE; x++) {
-            currentlyVisible[y][x] = false;
-        }
-    }
+    currentlyVisible = {};
     
     const playerEntities = [
         ...units.filter(u => u.owner === 'player'),
@@ -132,15 +158,17 @@ function updateVision() {
     ];
     
     playerEntities.forEach(entity => {
-        const visionRange = 2; // Reduced from 3 to 2
-        for (let dy = -visionRange; dy <= visionRange; dy++) {
-            for (let dx = -visionRange; dx <= visionRange; dx++) {
-                const nx = entity.x + dx;
-                const ny = entity.y + dy;
-                if (nx >= 0 && nx < GRID_SIZE && ny >= 0 && ny < GRID_SIZE) {
-                    currentlyVisible[ny][nx] = true;
-                    explored[ny][nx] = true;
-                    fogOfWar[ny][nx] = false;
+        const visionRange = 2;
+        for (let dq = -visionRange; dq <= visionRange; dq++) {
+            for (let dr = -visionRange; dr <= visionRange; dr++) {
+                if (hexDistance(0, 0, dq, dr) <= visionRange) {
+                    const nq = entity.q + dq;
+                    const nr = entity.r + dr;
+                    const key = `${nq},${nr}`;
+                    if (map[key]) {
+                        currentlyVisible[key] = true;
+                        explored[key] = true;
+                    }
                 }
             }
         }
@@ -148,30 +176,30 @@ function updateVision() {
 }
 
 function spawnEntities() {
-    function getValidSpawn(minY, maxY) {
-        let x, y, attempts = 0;
+    function getValidSpawn(minR, maxR) {
+        let q, r, attempts = 0;
         do {
-            x = Math.floor(Math.random() * GRID_SIZE);
-            y = Math.floor(Math.random() * (maxY - minY + 1)) + minY;
+            q = Math.floor(Math.random() * GRID_SIZE);
+            r = Math.floor(Math.random() * (maxR - minR + 1)) + minR;
             attempts++;
             if (attempts > 100) break;
-        } while (map[y][x].terrain === TERRAIN.WATER || map[y][x].terrain === TERRAIN.MOUNTAIN);
-        return { x, y };
+        } while (!map[`${q},${r}`] || map[`${q},${r}`].terrain === TERRAIN.WATER || map[`${q},${r}`].terrain === TERRAIN.MOUNTAIN);
+        return { q, r };
     }
 
     const playerStart = getValidSpawn(Math.floor(GRID_SIZE * 0.7), GRID_SIZE - 1);
-    cities.push({ x: playerStart.x, y: playerStart.y, owner: 'player', color: '#00ffff', name: 'Capital' });
-    units.push(createUnit('WARRIOR', playerStart.x, playerStart.y, 'player'));
+    cities.push({ q: playerStart.q, r: playerStart.r, owner: 'player', color: '#00ffff', name: 'Capital' });
+    units.push(createUnit('WARRIOR', playerStart.q, playerStart.r, 'player'));
 
     const aiStart = getValidSpawn(0, Math.floor(GRID_SIZE * 0.3));
-    cities.push({ x: aiStart.x, y: aiStart.y, owner: 'ai', color: '#e74c3c', name: 'Enemy City' });
-    units.push(createUnit('WARRIOR', aiStart.x, aiStart.y, 'ai'));
+    cities.push({ q: aiStart.q, r: aiStart.r, owner: 'ai', color: '#e74c3c', name: 'Enemy City' });
+    units.push(createUnit('WARRIOR', aiStart.q, aiStart.r, 'ai'));
 }
 
-function createUnit(typeName, x, y, owner) {
+function createUnit(typeName, q, r, owner) {
     const type = UNIT_TYPES[typeName];
     return {
-        x, y, owner,
+        q, r, owner,
         type: typeName,
         name: type.name,
         icon: type.icon,
@@ -182,6 +210,7 @@ function createUnit(typeName, x, y, owner) {
         moves: type.moves,
         maxMoves: type.moves,
         range: type.range,
+        rangedOnly: type.rangedOnly || false,
         color: owner === 'player' ? '#3498db' : '#c0392b'
     };
 }
@@ -207,7 +236,7 @@ function setupUnitButtons() {
         const btn = document.createElement('button');
         btn.className = 'unit-btn';
         btn.style.cssText = 'margin-top:5px;font-size:12px;padding:8px;';
-        btn.innerHTML = `${type.icon} ${type.name} (${type.trainTime} turns)`;
+        btn.innerHTML = `${type.icon} ${type.name} (${type.trainTime}t)`;
         btn.onclick = () => queueUnit(typeName);
         controls.appendChild(btn);
     });
@@ -220,7 +249,8 @@ function queueUnit(typeName) {
     if (!playerCity) return;
     
     if (trainingQueue.length > 0) {
-        showFloatingText(playerCity.x, playerCity.y, 'Already training!', '#e74c3c');
+        const pos = hexToPixel(playerCity.q, playerCity.r);
+        showFloatingText(pos.x, pos.y, 'Already training!', '#e74c3c');
         return;
     }
     
@@ -230,7 +260,8 @@ function queueUnit(typeName) {
         turnsLeft: UNIT_TYPES[typeName].trainTime
     });
     
-    showFloatingText(playerCity.x, playerCity.y, `Training ${UNIT_TYPES[typeName].icon}...`, '#f1c40f');
+    const pos = hexToPixel(playerCity.q, playerCity.r);
+    showFloatingText(pos.x, pos.y, `Training ${UNIT_TYPES[typeName].icon}...`, '#f1c40f');
     updateTrainingDisplay();
 }
 
@@ -243,7 +274,7 @@ function updateTrainingDisplay() {
     } else {
         const t = trainingQueue[0];
         const type = UNIT_TYPES[t.unitType];
-        queueDiv.innerHTML = `<small>Training: ${type.icon} ${type.name} - ${t.turnsLeft} turn${t.turnsLeft > 1 ? 's' : ''}</small>`;
+        queueDiv.innerHTML = `<small>Training: ${type.icon} ${type.name} - ${t.turnsLeft}t</small>`;
     }
 }
 
@@ -253,33 +284,31 @@ function processTraining(queue, owner) {
         
         if (queue[i].turnsLeft <= 0) {
             const t = queue[i];
-            const occupied = units.find(u => u.x === t.city.x && u.y === t.city.y);
+            const occupied = units.find(u => u.q === t.city.q && u.r === t.city.r);
             
             if (!occupied) {
-                const newUnit = createUnit(t.unitType, t.city.x, t.city.y, owner);
+                const newUnit = createUnit(t.unitType, t.city.q, t.city.r, owner);
                 newUnit.moves = 0;
                 units.push(newUnit);
                 
                 if (owner === 'player') {
-                    showFloatingText(t.city.x, t.city.y, `${UNIT_TYPES[t.unitType].icon} Ready!`, '#2ecc71');
+                    const pos = hexToPixel(t.city.q, t.city.r);
+                    showFloatingText(pos.x, pos.y, `${UNIT_TYPES[t.unitType].icon} Ready!`, '#2ecc71');
                 }
             } else {
-                const adj = [{x:0,y:-1},{x:0,y:1},{x:-1,y:0},{x:1,y:0}];
-                for (const d of adj) {
-                    const nx = t.city.x + d.x;
-                    const ny = t.city.y + d.y;
-                    if (nx >= 0 && nx < GRID_SIZE && ny >= 0 && ny < GRID_SIZE) {
-                        const ter = map[ny][nx].terrain;
-                        if (ter !== TERRAIN.WATER && ter !== TERRAIN.MOUNTAIN) {
-                            if (!units.find(u => u.x === nx && u.y === ny)) {
-                                const newUnit = createUnit(t.unitType, nx, ny, owner);
-                                newUnit.moves = 0;
-                                units.push(newUnit);
-                                if (owner === 'player') {
-                                    showFloatingText(nx, ny, `${UNIT_TYPES[t.unitType].icon} Ready!`, '#2ecc71');
-                                }
-                                break;
+                const neighbors = getHexNeighbors(t.city.q, t.city.r);
+                for (const n of neighbors) {
+                    const key = `${n.q},${n.r}`;
+                    if (map[key] && map[key].terrain !== TERRAIN.WATER && map[key].terrain !== TERRAIN.MOUNTAIN) {
+                        if (!units.find(u => u.q === n.q && u.r === n.r)) {
+                            const newUnit = createUnit(t.unitType, n.q, n.r, owner);
+                            newUnit.moves = 0;
+                            units.push(newUnit);
+                            if (owner === 'player') {
+                                const pos = hexToPixel(n.q, n.r);
+                                showFloatingText(pos.x, pos.y, `${UNIT_TYPES[t.unitType].icon} Ready!`, '#2ecc71');
                             }
+                            break;
                         }
                     }
                 }
@@ -300,149 +329,227 @@ function randomNormal(mean, stdDev) {
 }
 
 function showFloatingText(x, y, text, color) {
-    floatingTexts.push({
-        x: x * TILE_SIZE + TILE_SIZE/2,
-        y: y * TILE_SIZE + TILE_SIZE/2,
-        text, color,
-        life: 60,
-        maxLife: 60
-    });
+    floatingTexts.push({ x, y, text, color, life: 60, maxLife: 60 });
 }
 
-function createParticle(x, y, color) {
-    if (!currentlyVisible[y][x]) return;
+function createParticle(q, r, color) {
+    const key = `${q},${r}`;
+    if (!currentlyVisible[key]) return;
     
+    const pos = hexToPixel(q, r);
     for (let i = 0; i < 5; i++) {
         particles.push({
-            x: x * TILE_SIZE + TILE_SIZE/2,
-            y: y * TILE_SIZE + TILE_SIZE/2,
+            x: pos.x, y: pos.y,
             vx: (Math.random() - 0.5) * 4,
             vy: (Math.random() - 0.5) * 4,
-            life: 25,
-            maxLife: 25,
-            color,
-            size: Math.random() * 4 + 2,
-            tileX: x,
-            tileY: y
+            life: 25, maxLife: 25,
+            color, size: Math.random() * 4 + 2,
+            tileQ: q, tileR: r
         });
     }
 }
 
-// --- TERRAIN DRAWING ---
+// --- HEX DRAWING ---
 
-function drawTerrain(x, y, tile, darkened) {
-    const px = x * TILE_SIZE;
-    const py = y * TILE_SIZE;
+function drawHex(cx, cy, size) {
+    ctx.beginPath();
+    for (let i = 0; i < 6; i++) {
+        const angle = Math.PI / 180 * (60 * i - 30);
+        const x = cx + size * Math.cos(angle);
+        const y = cy + size * Math.sin(angle);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+}
+
+function drawTerrainHex(q, r, tile, darkened) {
+    const pos = hexToPixel(q, r);
     const seed = tile.seed;
     
+    // Base hex
+    drawHex(pos.x, pos.y, HEX_SIZE);
     ctx.fillStyle = tile.terrain.color;
-    ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
+    ctx.fill();
     
     if (tile.terrain.type === 'plains') {
         ctx.fillStyle = darkened ? '#5a8030' : '#7db844';
-        for (let i = 0; i < 8; i++) {
-            const gx = px + ((seed * (i + 1) * 7) % TILE_SIZE);
-            const gy = py + ((seed * (i + 2) * 11) % TILE_SIZE);
+        for (let i = 0; i < 6; i++) {
+            const gx = pos.x - 15 + ((seed * (i + 1) * 7) % 30);
+            const gy = pos.y - 15 + ((seed * (i + 2) * 11) % 30);
             ctx.fillRect(gx, gy, 2, 4);
         }
     }
     else if (tile.terrain.type === 'rainforest') {
-        for (let i = 0; i < 5; i++) {
-            const tx = px + 5 + ((seed * (i + 1) * 13) % (TILE_SIZE - 15));
-            const ty = py + 10 + ((seed * (i + 3) * 17) % (TILE_SIZE - 20));
+        for (let i = 0; i < 4; i++) {
+            const tx = pos.x - 12 + ((seed * (i + 1) * 13) % 24);
+            const ty = pos.y - 8 + ((seed * (i + 3) * 17) % 16);
             ctx.fillStyle = darkened ? '#2a1a10' : '#4a3520';
-            ctx.fillRect(tx + 4, ty + 8, 3, 6);
+            ctx.fillRect(tx + 3, ty + 6, 2, 5);
             ctx.fillStyle = darkened ? '#0f2810' : '#1e4620';
             ctx.beginPath();
-            ctx.moveTo(tx + 5, ty);
-            ctx.lineTo(tx + 12, ty + 10);
-            ctx.lineTo(tx - 2, ty + 10);
+            ctx.moveTo(tx + 4, ty);
+            ctx.lineTo(tx + 10, ty + 8);
+            ctx.lineTo(tx - 2, ty + 8);
             ctx.closePath();
             ctx.fill();
         }
     }
     else if (tile.terrain.type === 'tundra') {
         ctx.fillStyle = darkened ? '#aaa' : '#fff';
-        for (let i = 0; i < 12; i++) {
-            const sx = px + ((seed * (i + 1) * 7) % TILE_SIZE);
-            const sy = py + ((seed * (i + 2) * 11) % TILE_SIZE);
+        for (let i = 0; i < 8; i++) {
+            const sx = pos.x - 15 + ((seed * (i + 1) * 7) % 30);
+            const sy = pos.y - 15 + ((seed * (i + 2) * 11) % 30);
             ctx.beginPath();
             ctx.arc(sx, sy, 1.5, 0, Math.PI * 2);
             ctx.fill();
         }
-        ctx.fillStyle = darkened ? 'rgba(200,200,200,0.4)' : 'rgba(255,255,255,0.5)';
-        ctx.beginPath();
-        ctx.ellipse(px + 15 + (seed % 20), py + 25, 12, 6, 0, 0, Math.PI * 2);
-        ctx.fill();
     }
     else if (tile.terrain.type === 'water') {
         ctx.strokeStyle = darkened ? '#1a5a80' : '#3498db';
         ctx.lineWidth = 2;
         const time = Date.now() / 1000;
-        for (let i = 0; i < 3; i++) {
-            const wy = py + 12 + i * 14;
+        for (let i = 0; i < 2; i++) {
+            const wy = pos.y - 8 + i * 16;
             ctx.beginPath();
-            ctx.moveTo(px, wy + Math.sin(time + seed + i) * 3);
-            ctx.quadraticCurveTo(px + 12, wy - 4 + Math.sin(time + seed) * 2, px + 25, wy + Math.sin(time + seed + i) * 3);
-            ctx.quadraticCurveTo(px + 37, wy + 4 + Math.sin(time + seed) * 2, px + 50, wy + Math.sin(time + seed + i) * 3);
+            ctx.moveTo(pos.x - 20, wy + Math.sin(time + seed + i) * 3);
+            ctx.quadraticCurveTo(pos.x, wy - 4 + Math.sin(time + seed) * 2, pos.x + 20, wy + Math.sin(time + seed + i) * 3);
             ctx.stroke();
         }
     }
     else if (tile.terrain.type === 'mountain') {
         ctx.fillStyle = darkened ? '#3a4a52' : '#5a6a72';
         ctx.beginPath();
-        ctx.moveTo(px + 5, py + TILE_SIZE);
-        ctx.lineTo(px + 20, py + 8);
-        ctx.lineTo(px + 35, py + TILE_SIZE);
+        ctx.moveTo(pos.x - 15, pos.y + 15);
+        ctx.lineTo(pos.x - 5, pos.y - 12);
+        ctx.lineTo(pos.x + 5, pos.y + 15);
         ctx.closePath();
         ctx.fill();
         
         ctx.fillStyle = darkened ? '#2a3a42' : '#4a5a62';
         ctx.beginPath();
-        ctx.moveTo(px + 25, py + TILE_SIZE);
-        ctx.lineTo(px + 40, py + 15);
-        ctx.lineTo(px + 50, py + TILE_SIZE);
+        ctx.moveTo(pos.x, pos.y + 15);
+        ctx.lineTo(pos.x + 10, pos.y - 8);
+        ctx.lineTo(pos.x + 20, pos.y + 15);
         ctx.closePath();
         ctx.fill();
         
         ctx.fillStyle = darkened ? '#aaa' : '#fff';
         ctx.beginPath();
-        ctx.moveTo(px + 15, py + 15);
-        ctx.lineTo(px + 20, py + 8);
-        ctx.lineTo(px + 25, py + 15);
-        ctx.closePath();
-        ctx.fill();
-        
-        ctx.beginPath();
-        ctx.moveTo(px + 35, py + 20);
-        ctx.lineTo(px + 40, py + 15);
-        ctx.lineTo(px + 45, py + 22);
+        ctx.moveTo(pos.x - 8, pos.y - 6);
+        ctx.lineTo(pos.x - 5, pos.y - 12);
+        ctx.lineTo(pos.x - 2, pos.y - 6);
         ctx.closePath();
         ctx.fill();
     }
     
-    // Apply darkening overlay for explored but not visible
     if (darkened) {
+        drawHex(pos.x, pos.y, HEX_SIZE);
         ctx.fillStyle = 'rgba(0,0,0,0.4)';
-        ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
+        ctx.fill();
     }
+    
+    // Hex border
+    drawHex(pos.x, pos.y, HEX_SIZE);
+    ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
 }
 
-function drawFog(x, y) {
-    const px = x * TILE_SIZE;
-    const py = y * TILE_SIZE;
+function drawFogHex(q, r) {
+    const pos = hexToPixel(q, r);
     
+    drawHex(pos.x, pos.y, HEX_SIZE);
     ctx.fillStyle = '#d0d8e0';
-    ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
+    ctx.fill();
     
-    ctx.fillStyle = 'rgba(255,255,255,0.6)';
-    const seed = x * 100 + y;
-    for (let i = 0; i < 6; i++) {
-        const fx = px + ((seed * (i + 1) * 7) % TILE_SIZE);
-        const fy = py + ((seed * (i + 2) * 11) % TILE_SIZE);
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    const seed = q * 100 + r;
+    for (let i = 0; i < 4; i++) {
+        const fx = pos.x - 10 + ((seed * (i + 1) * 7) % 20);
+        const fy = pos.y - 10 + ((seed * (i + 2) * 11) % 20);
         ctx.beginPath();
-        ctx.arc(fx, fy, 8 + (i % 3) * 4, 0, Math.PI * 2);
+        ctx.arc(fx, fy, 6 + (i % 2) * 3, 0, Math.PI * 2);
         ctx.fill();
+    }
+    
+    drawHex(pos.x, pos.y, HEX_SIZE);
+    ctx.strokeStyle = 'rgba(0,0,0,0.1)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+}
+
+function drawCity(city) {
+    const key = `${city.q},${city.r}`;
+    if (!explored[key]) return;
+    if (city.owner === 'ai' && !currentlyVisible[key]) return;
+    
+    const pos = hexToPixel(city.q, city.r);
+    const darkened = !currentlyVisible[key];
+    
+    // Draw medieval buildings
+    const baseColor = city.owner === 'player' ? '#4a90a0' : '#904a4a';
+    const roofColor = city.owner === 'player' ? '#2a6070' : '#702a2a';
+    const wallColor = darkened ? '#555' : '#d4c4a0';
+    
+    // Castle wall base
+    ctx.fillStyle = darkened ? '#444' : wallColor;
+    ctx.fillRect(pos.x - 18, pos.y - 5, 36, 20);
+    
+    // Main tower (center)
+    ctx.fillStyle = darkened ? '#555' : wallColor;
+    ctx.fillRect(pos.x - 8, pos.y - 18, 16, 28);
+    
+    // Tower roof
+    ctx.fillStyle = darkened ? '#333' : roofColor;
+    ctx.beginPath();
+    ctx.moveTo(pos.x - 10, pos.y - 18);
+    ctx.lineTo(pos.x, pos.y - 28);
+    ctx.lineTo(pos.x + 10, pos.y - 18);
+    ctx.closePath();
+    ctx.fill();
+    
+    // Side towers
+    ctx.fillStyle = darkened ? '#555' : wallColor;
+    ctx.fillRect(pos.x - 20, pos.y - 10, 8, 18);
+    ctx.fillRect(pos.x + 12, pos.y - 10, 8, 18);
+    
+    // Side tower roofs
+    ctx.fillStyle = darkened ? '#333' : roofColor;
+    ctx.beginPath();
+    ctx.moveTo(pos.x - 22, pos.y - 10);
+    ctx.lineTo(pos.x - 16, pos.y - 18);
+    ctx.lineTo(pos.x - 10, pos.y - 10);
+    ctx.closePath();
+    ctx.fill();
+    
+    ctx.beginPath();
+    ctx.moveTo(pos.x + 10, pos.y - 10);
+    ctx.lineTo(pos.x + 16, pos.y - 18);
+    ctx.lineTo(pos.x + 22, pos.y - 10);
+    ctx.closePath();
+    ctx.fill();
+    
+    // Windows
+    ctx.fillStyle = darkened ? '#222' : '#2a1a10';
+    ctx.fillRect(pos.x - 3, pos.y - 12, 6, 8);
+    ctx.fillRect(pos.x - 18, pos.y - 5, 4, 5);
+    ctx.fillRect(pos.x + 14, pos.y - 5, 4, 5);
+    
+    // Flag
+    ctx.fillStyle = darkened ? '#666' : (city.owner === 'player' ? '#00ffff' : '#e74c3c');
+    ctx.fillRect(pos.x, pos.y - 28, 1, -8);
+    ctx.beginPath();
+    ctx.moveTo(pos.x + 1, pos.y - 36);
+    ctx.lineTo(pos.x + 10, pos.y - 33);
+    ctx.lineTo(pos.x + 1, pos.y - 30);
+    ctx.closePath();
+    ctx.fill();
+    
+    // Battlements
+    ctx.fillStyle = darkened ? '#555' : wallColor;
+    for (let i = 0; i < 5; i++) {
+        ctx.fillRect(pos.x - 18 + i * 9, pos.y - 8, 4, 3);
     }
 }
 
@@ -464,7 +571,8 @@ function update() {
     }
     
     for (let i = particles.length - 1; i >= 0; i--) {
-        if (!currentlyVisible[particles[i].tileY][particles[i].tileX]) {
+        const key = `${particles[i].tileQ},${particles[i].tileR}`;
+        if (!currentlyVisible[key]) {
             particles.splice(i, 1);
             continue;
         }
@@ -477,25 +585,18 @@ function update() {
 }
 
 function draw() {
-    ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+    ctx.fillStyle = '#1a2530';
+    ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 
     // Draw Map
-    for (let y = 0; y < GRID_SIZE; y++) {
-        for (let x = 0; x < GRID_SIZE; x++) {
-            if (!explored[y][x]) {
-                // Never seen - white fog
-                drawFog(x, y);
-            } else if (!currentlyVisible[y][x]) {
-                // Explored but not currently visible - darkened terrain
-                drawTerrain(x, y, map[y][x], true);
-            } else {
-                // Currently visible - normal terrain
-                drawTerrain(x, y, map[y][x], false);
-            }
-            
-            ctx.strokeStyle = 'rgba(0,0,0,0.1)';
-            ctx.lineWidth = 1;
-            ctx.strokeRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+    for (const key in map) {
+        const tile = map[key];
+        if (!explored[key]) {
+            drawFogHex(tile.q, tile.r);
+        } else if (!currentlyVisible[key]) {
+            drawTerrainHex(tile.q, tile.r, tile, true);
+        } else {
+            drawTerrainHex(tile.q, tile.r, tile, false);
         }
     }
 
@@ -503,64 +604,47 @@ function draw() {
     if (selectedUnit && selectedUnit.owner === 'player' && isPlayerTurn && selectedUnit.moves > 0) {
         const moves = getValidMoves(selectedUnit);
         moves.forEach(move => {
+            const pos = hexToPixel(move.q, move.r);
+            drawHex(pos.x, pos.y, HEX_SIZE - 2);
             ctx.fillStyle = 'rgba(241, 196, 15, 0.4)';
-            ctx.fillRect(move.x * TILE_SIZE, move.y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+            ctx.fill();
             ctx.strokeStyle = '#f1c40f';
             ctx.lineWidth = 2;
-            ctx.strokeRect(move.x * TILE_SIZE + 1, move.y * TILE_SIZE + 1, TILE_SIZE - 2, TILE_SIZE - 2);
+            ctx.stroke();
         });
         
         if (selectedUnit.range > 1) {
             const targets = getAttackTargets(selectedUnit);
             targets.forEach(t => {
+                const pos = hexToPixel(t.q, t.r);
+                drawHex(pos.x, pos.y, HEX_SIZE - 2);
                 ctx.fillStyle = 'rgba(231, 76, 60, 0.4)';
-                ctx.fillRect(t.x * TILE_SIZE, t.y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+                ctx.fill();
                 ctx.strokeStyle = '#e74c3c';
                 ctx.lineWidth = 2;
-                ctx.strokeRect(t.x * TILE_SIZE + 1, t.y * TILE_SIZE + 1, TILE_SIZE - 2, TILE_SIZE - 2);
+                ctx.stroke();
             });
         }
     }
 
-    // Draw Cities (only if currently visible or explored for player cities)
-    cities.forEach(city => {
-        if (!explored[city.y][city.x]) return;
-        if (city.owner === 'ai' && !currentlyVisible[city.y][city.x]) return;
-        
-        const darkened = !currentlyVisible[city.y][city.x];
-        
-        ctx.fillStyle = 'rgba(0,0,0,0.3)';
-        ctx.fillRect(city.x * TILE_SIZE + 6, city.y * TILE_SIZE + 6, TILE_SIZE - 6, TILE_SIZE - 6);
-        
-        ctx.fillStyle = darkened ? '#007788' : city.color;
-        ctx.fillRect(city.x * TILE_SIZE + 8, city.y * TILE_SIZE + 8, TILE_SIZE - 16, TILE_SIZE - 16);
-        
-        ctx.strokeStyle = darkened ? '#aaa' : '#fff';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(city.x * TILE_SIZE + 8, city.y * TILE_SIZE + 8, TILE_SIZE - 16, TILE_SIZE - 16);
-        
-        ctx.fillStyle = darkened ? '#aaa' : '#fff';
-        ctx.font = 'bold 12px Arial';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(city.owner === 'player' ? 'P' : 'E', city.x * TILE_SIZE + TILE_SIZE/2, city.y * TILE_SIZE + TILE_SIZE/2);
-    });
+    // Draw Cities
+    cities.forEach(city => drawCity(city));
 
-    // Draw Units (only if currently visible)
+    // Draw Units
     units.forEach(unit => {
-        if (!currentlyVisible[unit.y][unit.x]) return;
+        const key = `${unit.q},${unit.r}`;
+        if (!currentlyVisible[key]) return;
         
-        const cx = unit.x * TILE_SIZE + TILE_SIZE / 2;
-        const cy = unit.y * TILE_SIZE + TILE_SIZE / 2;
-        const radius = TILE_SIZE / 2.5;
+        const pos = hexToPixel(unit.q, unit.r);
+        const radius = 14;
 
         ctx.beginPath();
-        ctx.arc(cx + 2, cy + 2, radius, 0, Math.PI * 2);
+        ctx.arc(pos.x + 2, pos.y + 2, radius, 0, Math.PI * 2);
         ctx.fillStyle = 'rgba(0,0,0,0.4)';
         ctx.fill();
 
         ctx.beginPath();
-        ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+        ctx.arc(pos.x, pos.y, radius, 0, Math.PI * 2);
         ctx.fillStyle = unit.color;
         ctx.fill();
 
@@ -574,22 +658,23 @@ function draw() {
         ctx.stroke();
 
         ctx.fillStyle = '#fff';
-        ctx.font = '18px Arial';
+        ctx.font = '16px Arial';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(unit.icon, cx, cy);
+        ctx.fillText(unit.icon, pos.x, pos.y);
 
         if (unit.moves > 0 && unit.owner === 'player') {
             ctx.beginPath();
-            ctx.arc(cx + radius - 2, cy - radius + 2, 5, 0, Math.PI * 2);
+            ctx.arc(pos.x + 10, pos.y - 10, 4, 0, Math.PI * 2);
             ctx.fillStyle = '#2ecc71';
             ctx.fill();
         }
 
-        const barWidth = TILE_SIZE - 8;
+        // HP Bar
+        const barWidth = 28;
         const barHeight = 4;
-        const barX = unit.x * TILE_SIZE + 4;
-        const barY = unit.y * TILE_SIZE - 6;
+        const barX = pos.x - 14;
+        const barY = pos.y - 22;
         
         ctx.fillStyle = '#333';
         ctx.fillRect(barX, barY, barWidth, barHeight);
@@ -629,18 +714,21 @@ canvas.addEventListener('click', (e) => {
     if (gameOver || !isPlayerTurn) return;
 
     const rect = canvas.getBoundingClientRect();
-    const x = Math.floor((e.clientX - rect.left) / TILE_SIZE);
-    const y = Math.floor((e.clientY - rect.top) / TILE_SIZE);
-
-    if (x >= 0 && x < GRID_SIZE && y >= 0 && y < GRID_SIZE) {
-        handleTileClick(x, y);
+    const px = e.clientX - rect.left;
+    const py = e.clientY - rect.top;
+    
+    const hex = pixelToHex(px, py);
+    
+    if (map[`${hex.q},${hex.r}`]) {
+        handleHexClick(hex.q, hex.r);
     }
 });
 
-function handleTileClick(x, y) {
-    const clickedTile = map[y][x];
-    const clickedUnit = units.find(u => u.x === x && u.y === y);
-    const clickedCity = cities.find(c => c.x === x && c.y === y);
+function handleHexClick(q, r) {
+    const key = `${q},${r}`;
+    const clickedTile = map[key];
+    const clickedUnit = units.find(u => u.q === q && u.r === r);
+    const clickedCity = cities.find(c => c.q === q && c.r === r);
     
     updateInfoPanel(clickedTile, clickedUnit, clickedCity);
 
@@ -650,14 +738,33 @@ function handleTileClick(x, y) {
     }
 
     if (selectedUnit && selectedUnit.moves > 0) {
-        const validMoves = getValidMoves(selectedUnit);
-        const isValidMove = validMoves.some(m => m.x === x && m.y === y);
+        // Archers can only do ranged attacks
+        if (selectedUnit.rangedOnly && selectedUnit.range > 1) {
+            const targets = getAttackTargets(selectedUnit);
+            const rangedTarget = targets.find(t => t.q === q && t.r === r);
+            if (rangedTarget) {
+                const enemy = units.find(u => u.q === q && u.r === r && u.owner !== selectedUnit.owner);
+                if (enemy) {
+                    rangedAttack(selectedUnit, enemy);
+                    return;
+                }
+            }
+            // Archers can still move to empty tiles
+            const validMoves = getValidMoves(selectedUnit);
+            const isValidMove = validMoves.some(m => m.q === q && m.r === r);
+            const enemyOnTile = units.find(u => u.q === q && u.r === r && u.owner !== selectedUnit.owner);
+            if (isValidMove && !enemyOnTile) {
+                attemptMove(selectedUnit, q, r);
+            }
+            return;
+        }
         
+        // Non-archer units
         if (selectedUnit.range > 1) {
             const targets = getAttackTargets(selectedUnit);
-            const rangedTarget = targets.find(t => t.x === x && t.y === y);
+            const rangedTarget = targets.find(t => t.q === q && t.r === r);
             if (rangedTarget) {
-                const enemy = units.find(u => u.x === x && u.y === y && u.owner !== selectedUnit.owner);
+                const enemy = units.find(u => u.q === q && u.r === r && u.owner !== selectedUnit.owner);
                 if (enemy) {
                     rangedAttack(selectedUnit, enemy);
                     return;
@@ -665,8 +772,11 @@ function handleTileClick(x, y) {
             }
         }
         
+        const validMoves = getValidMoves(selectedUnit);
+        const isValidMove = validMoves.some(m => m.q === q && m.r === r);
+        
         if (isValidMove) {
-            attemptMove(selectedUnit, x, y);
+            attemptMove(selectedUnit, q, r);
         }
     }
 }
@@ -675,25 +785,36 @@ function getValidMoves(unit) {
     const moves = [];
     const range = unit.maxMoves;
     
-    for (let dy = -range; dy <= range; dy++) {
-        for (let dx = -range; dx <= range; dx++) {
-            const dist = Math.abs(dx) + Math.abs(dy);
+    for (let dq = -range; dq <= range; dq++) {
+        for (let dr = -range; dr <= range; dr++) {
+            const dist = hexDistance(0, 0, dq, dr);
             if (dist === 0 || dist > range) continue;
             
-            const nx = unit.x + dx;
-            const ny = unit.y + dy;
+            const nq = unit.q + dq;
+            const nr = unit.r + dr;
+            const key = `${nq},${nr}`;
             
-            if (nx < 0 || nx >= GRID_SIZE || ny < 0 || ny >= GRID_SIZE) continue;
+            if (!map[key]) continue;
             
-            const terrain = map[ny][nx].terrain;
+            const terrain = map[key].terrain;
+            
+            // Knights cannot cross water or mountains
+            if (unit.type === 'KNIGHT' && (terrain === TERRAIN.WATER || terrain === TERRAIN.MOUNTAIN)) continue;
+            
+            // Other units can't go on water/mountains either
             if (terrain === TERRAIN.WATER || terrain === TERRAIN.MOUNTAIN) continue;
             
+            // Knight slowed by rainforest
             if (unit.type === 'KNIGHT' && terrain.slowsKnight && dist > 1) continue;
             
-            const occupant = units.find(u => u.x === nx && u.y === ny);
+            const occupant = units.find(u => u.q === nq && u.r === nr);
+            
+            // Archers can't melee attack
+            if (unit.rangedOnly && occupant && occupant.owner !== unit.owner) continue;
+            
             if (occupant && occupant.owner === unit.owner) continue;
             
-            moves.push({ x: nx, y: ny });
+            moves.push({ q: nq, r: nr });
         }
     }
     
@@ -705,19 +826,20 @@ function getAttackTargets(unit) {
     if (unit.range <= 1) return targets;
     
     const range = unit.range;
-    for (let dy = -range; dy <= range; dy++) {
-        for (let dx = -range; dx <= range; dx++) {
-            const dist = Math.abs(dx) + Math.abs(dy);
+    for (let dq = -range; dq <= range; dq++) {
+        for (let dr = -range; dr <= range; dr++) {
+            const dist = hexDistance(0, 0, dq, dr);
             if (dist === 0 || dist > range) continue;
             
-            const nx = unit.x + dx;
-            const ny = unit.y + dy;
+            const nq = unit.q + dq;
+            const nr = unit.r + dr;
+            const key = `${nq},${nr}`;
             
-            if (nx < 0 || nx >= GRID_SIZE || ny < 0 || ny >= GRID_SIZE) continue;
+            if (!map[key]) continue;
             
-            const enemy = units.find(u => u.x === nx && u.y === ny && u.owner !== unit.owner);
-            if (enemy && currentlyVisible[ny][nx]) {
-                targets.push({ x: nx, y: ny });
+            const enemy = units.find(u => u.q === nq && u.r === nr && u.owner !== unit.owner);
+            if (enemy && currentlyVisible[key]) {
+                targets.push({ q: nq, r: nr });
             }
         }
     }
@@ -729,35 +851,36 @@ function rangedAttack(attacker, defender) {
     const damage = Math.max(1, randomNormal(attacker.attack, 3));
     defender.hp -= damage;
     
-    showFloatingText(defender.x, defender.y, `-${damage}`, '#e74c3c');
-    createParticle(defender.x, defender.y, '#e74c3c');
+    const pos = hexToPixel(defender.q, defender.r);
+    showFloatingText(pos.x, pos.y, `-${damage}`, '#e74c3c');
+    createParticle(defender.q, defender.r, '#e74c3c');
     
     attacker.moves = 0;
     
     if (defender.hp <= 0) {
         units = units.filter(u => u !== defender);
-        showFloatingText(defender.x, defender.y, 'Killed!', '#e74c3c');
+        showFloatingText(pos.x, pos.y, 'Killed!', '#e74c3c');
     }
     
     updateVision();
 }
 
-function attemptMove(unit, targetX, targetY) {
-    const enemy = units.find(u => u.x === targetX && u.y === targetY && u.owner !== unit.owner);
-    const enemyCity = cities.find(c => c.x === targetX && c.y === targetY && c.owner !== unit.owner);
+function attemptMove(unit, targetQ, targetR) {
+    const enemy = units.find(u => u.q === targetQ && u.r === targetR && u.owner !== unit.owner);
+    const enemyCity = cities.find(c => c.q === targetQ && c.r === targetR && c.owner !== unit.owner);
     
     if (enemy) {
         resolveCombat(unit, enemy);
     } else if (enemyCity && !enemy) {
-        unit.x = targetX;
-        unit.y = targetY;
+        unit.q = targetQ;
+        unit.r = targetR;
         unit.moves = 0;
         captureCity(unit, enemyCity);
     } else {
-        unit.x = targetX;
-        unit.y = targetY;
+        unit.q = targetQ;
+        unit.r = targetR;
         unit.moves = 0;
-        createParticle(targetX, targetY, unit.color);
+        createParticle(targetQ, targetR, unit.color);
     }
     
     updateVision();
@@ -768,10 +891,10 @@ function captureCity(unit, city) {
     city.owner = unit.owner;
     city.color = unit.owner === 'player' ? '#00ffff' : '#e74c3c';
     
-    showFloatingText(city.x, city.y, 'Captured!', '#f1c40f');
-    createParticle(city.x, city.y, '#f1c40f');
+    const pos = hexToPixel(city.q, city.r);
+    showFloatingText(pos.x, pos.y, 'Captured!', '#f1c40f');
+    createParticle(city.q, city.r, '#f1c40f');
     
-    // Win by capturing city
     if (oldOwner === 'ai') {
         endGame("VICTORY!", "victory");
     } else if (oldOwner === 'player') {
@@ -780,13 +903,14 @@ function captureCity(unit, city) {
 }
 
 function resolveCombat(attacker, defender) {
-    const defenderTerrain = map[defender.y][defender.x].terrain;
+    const defenderKey = `${defender.q},${defender.r}`;
+    const defenderTerrain = map[defenderKey].terrain;
     
     let atkDamage = attacker.attack;
     let defDamage = defender.attack;
     
-    if (defenderTerrain.type === 'rainforest') defDamage += 3;
-    if (defenderTerrain.type === 'tundra') defDamage += 2;
+    // Apply terrain defense bonus (20% style)
+    defDamage += defenderTerrain.defenseBonus;
     
     const damageToDefender = Math.max(1, randomNormal(atkDamage, 3));
     const damageToAttacker = Math.max(1, randomNormal(defDamage, 3));
@@ -794,11 +918,14 @@ function resolveCombat(attacker, defender) {
     defender.hp -= damageToDefender;
     attacker.hp -= damageToAttacker;
     
-    showFloatingText(defender.x, defender.y, `-${damageToDefender}`, '#e74c3c');
-    showFloatingText(attacker.x, attacker.y, `-${damageToAttacker}`, '#e74c3c');
+    const defPos = hexToPixel(defender.q, defender.r);
+    const atkPos = hexToPixel(attacker.q, attacker.r);
     
-    createParticle(defender.x, defender.y, '#e74c3c');
-    createParticle(attacker.x, attacker.y, '#e74c3c');
+    showFloatingText(defPos.x, defPos.y, `-${damageToDefender}`, '#e74c3c');
+    showFloatingText(atkPos.x, atkPos.y, `-${damageToAttacker}`, '#e74c3c');
+    
+    createParticle(defender.q, defender.r, '#e74c3c');
+    createParticle(attacker.q, attacker.r, '#e74c3c');
     
     attacker.moves = 0;
 
@@ -806,8 +933,8 @@ function resolveCombat(attacker, defender) {
     const defenderDied = defender.hp <= 0;
     
     if (defenderDied && !attackerDied) {
-        attacker.x = defender.x;
-        attacker.y = defender.y;
+        attacker.q = defender.q;
+        attacker.r = defender.r;
     }
     
     units = units.filter(u => u.hp > 0);
@@ -821,7 +948,7 @@ function endGame(message, type) {
     
     setTimeout(() => {
         ctx.fillStyle = 'rgba(0,0,0,0.85)';
-        ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+        ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
         
         ctx.fillStyle = color;
         ctx.font = 'bold 42px Arial';
@@ -829,8 +956,8 @@ function endGame(message, type) {
         ctx.textBaseline = 'middle';
         ctx.strokeStyle = 'black';
         ctx.lineWidth = 4;
-        ctx.strokeText(message, CANVAS_SIZE/2, CANVAS_SIZE/2);
-        ctx.fillText(message, CANVAS_SIZE/2, CANVAS_SIZE/2);
+        ctx.strokeText(message, CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+        ctx.fillText(message, CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
         
         playerDisplay.textContent = message;
         playerDisplay.style.color = color;
@@ -841,19 +968,20 @@ function endGame(message, type) {
 }
 
 function updateInfoPanel(tile, unit, city) {
-    if (!explored[tile.y][tile.x]) {
+    const key = `${tile.q},${tile.r}`;
+    if (!explored[key]) {
         tileInfoDisplay.innerHTML = '<p><em>Unknown territory</em></p>';
         return;
     }
     
-    let content = `<p><strong>Pos:</strong> (${tile.x}, ${tile.y})</p>`;
-    content += `<p><strong>Terrain:</strong> ${tile.terrain.label}</p>`;
+    let content = `<p><strong>Terrain:</strong> ${tile.terrain.label}</p>`;
+    content += `<p><strong>Defense:</strong> +${tile.terrain.defenseBonus}</p>`;
 
-    if (city && (city.owner === 'player' || currentlyVisible[city.y][city.x])) {
+    if (city && (city.owner === 'player' || currentlyVisible[key])) {
         content += `<p><strong>City:</strong> ${city.name}</p>`;
     }
     
-    if (unit && currentlyVisible[unit.y][unit.x]) {
+    if (unit && currentlyVisible[key]) {
         content += `<p><strong>Unit:</strong> ${unit.icon} ${unit.name}</p>`;
         content += `<p><strong>HP:</strong> ${unit.hp}/${unit.maxHp}</p>`;
         content += `<p><strong>ATK:</strong> ${unit.attack} <strong>DEF:</strong> ${unit.defense}</p>`;
@@ -915,29 +1043,38 @@ function aiTurn() {
     aiUnits.forEach(unit => {
         if (gameOver || unit.moves <= 0) return;
         
-        // Check if player is threatening AI city - prioritize defense
+        // PRIORITY: Defend city if player can capture it
         if (aiCity) {
-            const playerNearCity = playerUnits.find(p => {
-                const dist = Math.abs(p.x - aiCity.x) + Math.abs(p.y - aiCity.y);
-                return dist <= 3;
+            const playerCanCapture = playerUnits.find(p => {
+                const dist = hexDistance(p.q, p.r, aiCity.q, aiCity.r);
+                return dist <= p.maxMoves;
             });
             
-            if (playerNearCity) {
-                // Try to attack the threatening player unit
-                const validMoves = getValidMoves(unit);
-                const attackMove = validMoves.find(m => m.x === playerNearCity.x && m.y === playerNearCity.y);
+            if (playerCanCapture) {
+                // Try to attack the threatening player
+                if (unit.rangedOnly && unit.range > 1) {
+                    const targets = getAttackTargets(unit);
+                    const threat = targets.find(t => t.q === playerCanCapture.q && t.r === playerCanCapture.r);
+                    if (threat) {
+                        rangedAttack(unit, playerCanCapture);
+                        return;
+                    }
+                }
                 
-                if (attackMove) {
-                    attemptMove(unit, attackMove.x, attackMove.y);
+                const validMoves = getValidMoves(unit);
+                const attackMove = validMoves.find(m => m.q === playerCanCapture.q && m.r === playerCanCapture.r);
+                
+                if (attackMove && !unit.rangedOnly) {
+                    attemptMove(unit, attackMove.q, attackMove.r);
                     return;
                 }
                 
-                // Move towards the threat
+                // Move towards threat
                 let bestMove = null;
                 let minDist = Infinity;
                 
                 validMoves.forEach(move => {
-                    const dist = Math.abs(move.x - playerNearCity.x) + Math.abs(move.y - playerNearCity.y);
+                    const dist = hexDistance(move.q, move.r, playerCanCapture.q, playerCanCapture.r);
                     if (dist < minDist) {
                         minDist = dist;
                         bestMove = move;
@@ -945,18 +1082,18 @@ function aiTurn() {
                 });
                 
                 if (bestMove) {
-                    attemptMove(unit, bestMove.x, bestMove.y);
+                    attemptMove(unit, bestMove.q, bestMove.r);
                     return;
                 }
             }
         }
         
-        // Archers try ranged attack
-        if (unit.range > 1) {
+        // Archers ranged attack
+        if (unit.rangedOnly && unit.range > 1) {
             const targets = getAttackTargets(unit);
             if (targets.length > 0) {
                 const target = targets[0];
-                const enemy = units.find(u => u.x === target.x && u.y === target.y);
+                const enemy = units.find(u => u.q === target.q && u.r === target.r);
                 if (enemy) {
                     rangedAttack(unit, enemy);
                     return;
@@ -971,25 +1108,26 @@ function aiTurn() {
         const validMoves = getValidMoves(unit);
         if (validMoves.length === 0) return;
 
-        const attackMove = validMoves.find(m => playerUnits.find(p => p.x === m.x && p.y === m.y));
-
-        if (attackMove) {
-            attemptMove(unit, attackMove.x, attackMove.y);
-            return;
+        if (!unit.rangedOnly) {
+            const attackMove = validMoves.find(m => playerUnits.find(p => p.q === m.q && p.r === m.r));
+            if (attackMove) {
+                attemptMove(unit, attackMove.q, attackMove.r);
+                return;
+            }
         }
 
         let bestMove = null;
         let minDist = Infinity;
 
         validMoves.forEach(move => {
-            const dist = Math.abs(move.x - target.x) + Math.abs(move.y - target.y);
+            const dist = hexDistance(move.q, move.r, target.q, target.r);
             if (dist < minDist) {
                 minDist = dist;
                 bestMove = move;
             }
         });
 
-        if (bestMove) attemptMove(unit, bestMove.x, bestMove.y);
+        if (bestMove) attemptMove(unit, bestMove.q, bestMove.r);
     });
 
     if (gameOver) return;
