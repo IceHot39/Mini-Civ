@@ -4,18 +4,18 @@ const TILE_SIZE = 50;
 
 // TERRAIN DEFINITIONS
 const TERRAIN = {
-    TUNDRA: { type: 'tundra', color: '#bdc3c7', label: 'Tundra' },
-    PLAINS: { type: 'plains', color: '#2ecc71', label: 'Plains' },
-    RAINFOREST: { type: 'rainforest', color: '#27ae60', label: 'Rainforest' },
-    WATER: { type: 'water', color: '#3498db', label: 'Water' },
-    MOUNTAIN: { type: 'mountain', color: '#7f8c8d', label: 'Mountain' }
+    TUNDRA: { type: 'tundra', color: '#e8f4f8', label: 'Tundra' },
+    PLAINS: { type: 'plains', color: '#90c956', label: 'Plains' },
+    RAINFOREST: { type: 'rainforest', color: '#2d5a27', label: 'Rainforest', slowsKnight: true },
+    WATER: { type: 'water', color: '#2980b9', label: 'Water' },
+    MOUNTAIN: { type: 'mountain', color: '#6b7c85', label: 'Mountain' }
 };
 
-// UNIT TYPES - Balanced
+// UNIT TYPES
 const UNIT_TYPES = {
-    WARRIOR: { name: 'Warrior', icon: '⚔', maxHp: 60, attack: 15, defense: 12, moves: 1, range: 1 },
-    ARCHER: { name: 'Archer', icon: '🏹', maxHp: 40, attack: 12, defense: 6, moves: 1, range: 2 },
-    KNIGHT: { name: 'Knight', icon: '🐴', maxHp: 50, attack: 10, defense: 10, moves: 2, range: 1 }
+    WARRIOR: { name: 'Warrior', icon: '⚔', maxHp: 60, attack: 15, defense: 12, moves: 1, range: 1, trainTime: 3 },
+    ARCHER: { name: 'Archer', icon: '🏹', maxHp: 40, attack: 12, defense: 6, moves: 1, range: 2, trainTime: 3 },
+    KNIGHT: { name: 'Knight', icon: '🐴', maxHp: 50, attack: 10, defense: 10, moves: 2, range: 1, trainTime: 3 }
 };
 
 // GAME STATE
@@ -29,6 +29,8 @@ let isPlayerTurn = true;
 let selectedUnit = null;
 let gameOver = false;
 let fogOfWar = [];
+let trainingQueue = []; // {city, unitType, turnsLeft}
+let aiTrainingQueue = [];
 
 // DOM ELEMENTS
 const canvas = document.getElementById('gameCanvas');
@@ -51,6 +53,8 @@ function initGame() {
     isPlayerTurn = true;
     gameOver = false;
     selectedUnit = null;
+    trainingQueue = [];
+    aiTrainingQueue = [];
     
     initFogOfWar();
     spawnEntities();
@@ -73,13 +77,13 @@ function generateMap() {
             const rand = Math.random();
             let terrain;
             
-            if (rand < 0.12) terrain = TERRAIN.WATER;
+            if (rand < 0.08) terrain = TERRAIN.WATER;
             else if (rand < 0.45) terrain = TERRAIN.PLAINS;
             else if (rand < 0.7) terrain = TERRAIN.RAINFOREST;
-            else if (rand < 0.88) terrain = TERRAIN.TUNDRA;
+            else if (rand < 0.92) terrain = TERRAIN.TUNDRA;
             else terrain = TERRAIN.MOUNTAIN;
 
-            row.push({ x, y, terrain });
+            row.push({ x, y, terrain, seed: Math.random() * 1000 });
         }
         newMap.push(row);
     }
@@ -98,14 +102,12 @@ function initFogOfWar() {
 }
 
 function updateVision() {
-    // Reset fog
     for (let y = 0; y < GRID_SIZE; y++) {
         for (let x = 0; x < GRID_SIZE; x++) {
             fogOfWar[y][x] = true;
         }
     }
     
-    // Reveal around player units and cities
     const playerEntities = [
         ...units.filter(u => u.owner === 'player'),
         ...cities.filter(c => c.owner === 'player')
@@ -137,12 +139,10 @@ function spawnEntities() {
         return { x, y };
     }
 
-    // Player
     const playerStart = getValidSpawn(Math.floor(GRID_SIZE * 0.7), GRID_SIZE - 1);
     cities.push({ x: playerStart.x, y: playerStart.y, owner: 'player', color: '#00ffff', name: 'Capital' });
     units.push(createUnit('WARRIOR', playerStart.x, playerStart.y, 'player'));
 
-    // AI
     const aiStart = getValidSpawn(0, Math.floor(GRID_SIZE * 0.3));
     cities.push({ x: aiStart.x, y: aiStart.y, owner: 'ai', color: '#e74c3c', name: 'Enemy City' });
     units.push(createUnit('WARRIOR', aiStart.x, aiStart.y, 'ai'));
@@ -167,43 +167,108 @@ function createUnit(typeName, x, y, owner) {
 }
 
 function setupUnitButtons() {
-    // Remove old buttons if they exist
     const oldBtns = document.querySelectorAll('.unit-btn');
     oldBtns.forEach(btn => btn.remove());
     
-    // Create unit buttons
+    const oldQueue = document.getElementById('training-queue');
+    if (oldQueue) oldQueue.remove();
+    
     const controls = document.querySelector('.controls');
     if (!controls) return;
+    
+    // Training queue display
+    const queueDiv = document.createElement('div');
+    queueDiv.id = 'training-queue';
+    queueDiv.style.cssText = 'margin-bottom:10px;padding:8px;background:rgba(0,0,0,0.3);border-radius:4px;min-height:20px;';
+    queueDiv.innerHTML = '<small>Training: None</small>';
+    controls.insertBefore(queueDiv, controls.firstChild);
     
     Object.keys(UNIT_TYPES).forEach(typeName => {
         const type = UNIT_TYPES[typeName];
         const btn = document.createElement('button');
         btn.className = 'unit-btn';
-        btn.innerHTML = `${type.icon} ${type.name}`;
-        btn.onclick = () => trainUnit(typeName);
+        btn.style.cssText = 'margin-top:5px;font-size:12px;padding:8px;';
+        btn.innerHTML = `${type.icon} ${type.name} (${type.trainTime} turns)`;
+        btn.onclick = () => queueUnit(typeName);
         controls.appendChild(btn);
     });
 }
 
-function trainUnit(typeName) {
+function queueUnit(typeName) {
     if (!isPlayerTurn || gameOver) return;
     
     const playerCity = cities.find(c => c.owner === 'player');
     if (!playerCity) return;
     
-    // Check if tile is occupied
-    const occupied = units.find(u => u.x === playerCity.x && u.y === playerCity.y);
-    if (occupied) {
-        showFloatingText(playerCity.x, playerCity.y, 'City Occupied!', '#e74c3c');
+    if (trainingQueue.length > 0) {
+        showFloatingText(playerCity.x, playerCity.y, 'Already training!', '#e74c3c');
         return;
     }
     
-    const newUnit = createUnit(typeName, playerCity.x, playerCity.y, 'player');
-    newUnit.moves = 0; // Can't move on the turn it's created
-    units.push(newUnit);
+    trainingQueue.push({
+        city: playerCity,
+        unitType: typeName,
+        turnsLeft: UNIT_TYPES[typeName].trainTime
+    });
     
-    showFloatingText(playerCity.x, playerCity.y, `${UNIT_TYPES[typeName].icon} Trained!`, '#2ecc71');
-    updateVision();
+    showFloatingText(playerCity.x, playerCity.y, `Training ${UNIT_TYPES[typeName].icon}...`, '#f1c40f');
+    updateTrainingDisplay();
+}
+
+function updateTrainingDisplay() {
+    const queueDiv = document.getElementById('training-queue');
+    if (!queueDiv) return;
+    
+    if (trainingQueue.length === 0) {
+        queueDiv.innerHTML = '<small>Training: None</small>';
+    } else {
+        const t = trainingQueue[0];
+        const type = UNIT_TYPES[t.unitType];
+        queueDiv.innerHTML = `<small>Training: ${type.icon} ${type.name} - ${t.turnsLeft} turn${t.turnsLeft > 1 ? 's' : ''}</small>`;
+    }
+}
+
+function processTraining(queue, owner) {
+    for (let i = queue.length - 1; i >= 0; i--) {
+        queue[i].turnsLeft--;
+        
+        if (queue[i].turnsLeft <= 0) {
+            const t = queue[i];
+            const occupied = units.find(u => u.x === t.city.x && u.y === t.city.y);
+            
+            if (!occupied) {
+                const newUnit = createUnit(t.unitType, t.city.x, t.city.y, owner);
+                newUnit.moves = 0;
+                units.push(newUnit);
+                
+                if (owner === 'player') {
+                    showFloatingText(t.city.x, t.city.y, `${UNIT_TYPES[t.unitType].icon} Ready!`, '#2ecc71');
+                }
+            } else {
+                // Spawn adjacent if city occupied
+                const adj = [{x:0,y:-1},{x:0,y:1},{x:-1,y:0},{x:1,y:0}];
+                for (const d of adj) {
+                    const nx = t.city.x + d.x;
+                    const ny = t.city.y + d.y;
+                    if (nx >= 0 && nx < GRID_SIZE && ny >= 0 && ny < GRID_SIZE) {
+                        const ter = map[ny][nx].terrain;
+                        if (ter !== TERRAIN.WATER && ter !== TERRAIN.MOUNTAIN) {
+                            if (!units.find(u => u.x === nx && u.y === ny)) {
+                                const newUnit = createUnit(t.unitType, nx, ny, owner);
+                                newUnit.moves = 0;
+                                units.push(newUnit);
+                                if (owner === 'player') {
+                                    showFloatingText(nx, ny, `${UNIT_TYPES[t.unitType].icon} Ready!`, '#2ecc71');
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            queue.splice(i, 1);
+        }
+    }
 }
 
 // --- HELPER FUNCTIONS ---
@@ -220,14 +285,15 @@ function showFloatingText(x, y, text, color) {
     floatingTexts.push({
         x: x * TILE_SIZE + TILE_SIZE/2,
         y: y * TILE_SIZE + TILE_SIZE/2,
-        text: text,
-        color: color,
+        text, color,
         life: 60,
         maxLife: 60
     });
 }
 
 function createParticle(x, y, color) {
+    if (fogOfWar[y][x]) return; // Don't show particles in fog
+    
     for (let i = 0; i < 5; i++) {
         particles.push({
             x: x * TILE_SIZE + TILE_SIZE/2,
@@ -236,9 +302,136 @@ function createParticle(x, y, color) {
             vy: (Math.random() - 0.5) * 4,
             life: 25,
             maxLife: 25,
-            color: color,
-            size: Math.random() * 4 + 2
+            color,
+            size: Math.random() * 4 + 2,
+            tileX: x,
+            tileY: y
         });
+    }
+}
+
+// --- TERRAIN DRAWING ---
+
+function drawTerrain(x, y, tile) {
+    const px = x * TILE_SIZE;
+    const py = y * TILE_SIZE;
+    const seed = tile.seed;
+    
+    // Base color
+    ctx.fillStyle = tile.terrain.color;
+    ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
+    
+    if (tile.terrain.type === 'plains') {
+        // Grass texture
+        ctx.fillStyle = '#7db844';
+        for (let i = 0; i < 8; i++) {
+            const gx = px + ((seed * (i + 1) * 7) % TILE_SIZE);
+            const gy = py + ((seed * (i + 2) * 11) % TILE_SIZE);
+            ctx.fillRect(gx, gy, 2, 4);
+        }
+    }
+    else if (tile.terrain.type === 'rainforest') {
+        // Trees
+        ctx.fillStyle = '#1e4620';
+        for (let i = 0; i < 5; i++) {
+            const tx = px + 5 + ((seed * (i + 1) * 13) % (TILE_SIZE - 15));
+            const ty = py + 10 + ((seed * (i + 3) * 17) % (TILE_SIZE - 20));
+            // Tree trunk
+            ctx.fillStyle = '#4a3520';
+            ctx.fillRect(tx + 4, ty + 8, 3, 6);
+            // Tree foliage
+            ctx.fillStyle = '#1e4620';
+            ctx.beginPath();
+            ctx.moveTo(tx + 5, ty);
+            ctx.lineTo(tx + 12, ty + 10);
+            ctx.lineTo(tx - 2, ty + 10);
+            ctx.closePath();
+            ctx.fill();
+        }
+    }
+    else if (tile.terrain.type === 'tundra') {
+        // Snow flakes
+        ctx.fillStyle = '#fff';
+        for (let i = 0; i < 12; i++) {
+            const sx = px + ((seed * (i + 1) * 7) % TILE_SIZE);
+            const sy = py + ((seed * (i + 2) * 11) % TILE_SIZE);
+            ctx.beginPath();
+            ctx.arc(sx, sy, 1.5, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        // Snow patches
+        ctx.fillStyle = 'rgba(255,255,255,0.5)';
+        ctx.beginPath();
+        ctx.ellipse(px + 15 + (seed % 20), py + 25, 12, 6, 0, 0, Math.PI * 2);
+        ctx.fill();
+    }
+    else if (tile.terrain.type === 'water') {
+        // Waves
+        ctx.strokeStyle = '#3498db';
+        ctx.lineWidth = 2;
+        const time = Date.now() / 1000;
+        for (let i = 0; i < 3; i++) {
+            const wy = py + 12 + i * 14;
+            ctx.beginPath();
+            ctx.moveTo(px, wy + Math.sin(time + seed + i) * 3);
+            ctx.quadraticCurveTo(px + 12, wy - 4 + Math.sin(time + seed) * 2, px + 25, wy + Math.sin(time + seed + i) * 3);
+            ctx.quadraticCurveTo(px + 37, wy + 4 + Math.sin(time + seed) * 2, px + 50, wy + Math.sin(time + seed + i) * 3);
+            ctx.stroke();
+        }
+    }
+    else if (tile.terrain.type === 'mountain') {
+        // Mountain peaks
+        ctx.fillStyle = '#5a6a72';
+        ctx.beginPath();
+        ctx.moveTo(px + 5, py + TILE_SIZE);
+        ctx.lineTo(px + 20, py + 8);
+        ctx.lineTo(px + 35, py + TILE_SIZE);
+        ctx.closePath();
+        ctx.fill();
+        
+        ctx.fillStyle = '#4a5a62';
+        ctx.beginPath();
+        ctx.moveTo(px + 25, py + TILE_SIZE);
+        ctx.lineTo(px + 40, py + 15);
+        ctx.lineTo(px + 50, py + TILE_SIZE);
+        ctx.closePath();
+        ctx.fill();
+        
+        // Snow caps
+        ctx.fillStyle = '#fff';
+        ctx.beginPath();
+        ctx.moveTo(px + 15, py + 15);
+        ctx.lineTo(px + 20, py + 8);
+        ctx.lineTo(px + 25, py + 15);
+        ctx.closePath();
+        ctx.fill();
+        
+        ctx.beginPath();
+        ctx.moveTo(px + 35, py + 20);
+        ctx.lineTo(px + 40, py + 15);
+        ctx.lineTo(px + 45, py + 22);
+        ctx.closePath();
+        ctx.fill();
+    }
+}
+
+function drawFog(x, y) {
+    const px = x * TILE_SIZE;
+    const py = y * TILE_SIZE;
+    
+    // White fog
+    ctx.fillStyle = '#d0d8e0';
+    ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
+    
+    // Fog texture
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    const seed = x * 100 + y;
+    for (let i = 0; i < 6; i++) {
+        const fx = px + ((seed * (i + 1) * 7) % TILE_SIZE);
+        const fy = py + ((seed * (i + 2) * 11) % TILE_SIZE);
+        ctx.beginPath();
+        ctx.arc(fx, fy, 8 + (i % 3) * 4, 0, Math.PI * 2);
+        ctx.fill();
     }
 }
 
@@ -260,6 +453,11 @@ function update() {
     }
     
     for (let i = particles.length - 1; i >= 0; i--) {
+        // Remove particles in fog
+        if (fogOfWar[particles[i].tileY][particles[i].tileX]) {
+            particles.splice(i, 1);
+            continue;
+        }
         particles[i].x += particles[i].vx;
         particles[i].y += particles[i].vy;
         particles[i].vy += 0.15;
@@ -274,18 +472,13 @@ function draw() {
     // Draw Map
     for (let y = 0; y < GRID_SIZE; y++) {
         for (let x = 0; x < GRID_SIZE; x++) {
-            const tile = map[y][x];
-            
-            ctx.fillStyle = tile.terrain.color;
-            ctx.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
-
-            // Fog of War
             if (fogOfWar[y][x]) {
-                ctx.fillStyle = 'rgba(0,0,0,0.7)';
-                ctx.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+                drawFog(x, y);
+            } else {
+                drawTerrain(x, y, map[y][x]);
             }
-
-            ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+            
+            ctx.strokeStyle = 'rgba(0,0,0,0.1)';
             ctx.lineWidth = 1;
             ctx.strokeRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
         }
@@ -302,7 +495,6 @@ function draw() {
             ctx.strokeRect(move.x * TILE_SIZE + 1, move.y * TILE_SIZE + 1, TILE_SIZE - 2, TILE_SIZE - 2);
         });
         
-        // Draw attack range for archers
         if (selectedUnit.range > 1) {
             const targets = getAttackTargets(selectedUnit);
             targets.forEach(t => {
@@ -315,9 +507,9 @@ function draw() {
         }
     }
 
-    // Draw Cities
+    // Draw Cities (only if visible)
     cities.forEach(city => {
-        if (fogOfWar[city.y][city.x] && city.owner === 'ai') return;
+        if (fogOfWar[city.y][city.x]) return;
         
         ctx.fillStyle = 'rgba(0,0,0,0.3)';
         ctx.fillRect(city.x * TILE_SIZE + 6, city.y * TILE_SIZE + 6, TILE_SIZE - 6, TILE_SIZE - 6);
@@ -336,27 +528,24 @@ function draw() {
         ctx.fillText(city.owner === 'player' ? 'P' : 'E', city.x * TILE_SIZE + TILE_SIZE/2, city.y * TILE_SIZE + TILE_SIZE/2);
     });
 
-    // Draw Units
+    // Draw Units (only if visible)
     units.forEach(unit => {
-        if (fogOfWar[unit.y][unit.x] && unit.owner === 'ai') return;
+        if (fogOfWar[unit.y][unit.x]) return;
         
         const cx = unit.x * TILE_SIZE + TILE_SIZE / 2;
         const cy = unit.y * TILE_SIZE + TILE_SIZE / 2;
         const radius = TILE_SIZE / 2.5;
 
-        // Shadow
         ctx.beginPath();
         ctx.arc(cx + 2, cy + 2, radius, 0, Math.PI * 2);
         ctx.fillStyle = 'rgba(0,0,0,0.4)';
         ctx.fill();
 
-        // Body
         ctx.beginPath();
         ctx.arc(cx, cy, radius, 0, Math.PI * 2);
         ctx.fillStyle = unit.color;
         ctx.fill();
 
-        // Selection
         if (selectedUnit === unit) {
             ctx.strokeStyle = '#f1c40f';
             ctx.lineWidth = 3;
@@ -366,14 +555,12 @@ function draw() {
         }
         ctx.stroke();
 
-        // Icon
         ctx.fillStyle = '#fff';
         ctx.font = '18px Arial';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(unit.icon, cx, cy);
 
-        // Moves indicator
         if (unit.moves > 0 && unit.owner === 'player') {
             ctx.beginPath();
             ctx.arc(cx + radius - 2, cy - radius + 2, 5, 0, Math.PI * 2);
@@ -381,7 +568,6 @@ function draw() {
             ctx.fill();
         }
 
-        // HP Bar
         const barWidth = TILE_SIZE - 8;
         const barHeight = 4;
         const barX = unit.x * TILE_SIZE + 4;
@@ -395,7 +581,7 @@ function draw() {
         ctx.fillRect(barX, barY, barWidth * hpPercent, barHeight);
     });
 
-    // Particles
+    // Particles (already filtered for fog in update)
     particles.forEach(p => {
         ctx.globalAlpha = p.life / p.maxLife;
         ctx.fillStyle = p.color;
@@ -443,18 +629,15 @@ function handleTileClick(x, y) {
     
     updateInfoPanel(clickedTile, clickedUnit, clickedCity);
 
-    // If clicking own unit, select it
     if (clickedUnit && clickedUnit.owner === 'player') {
         selectedUnit = clickedUnit;
         return;
     }
 
-    // If unit selected and clicking valid move
     if (selectedUnit && selectedUnit.moves > 0) {
         const validMoves = getValidMoves(selectedUnit);
         const isValidMove = validMoves.some(m => m.x === x && m.y === y);
         
-        // Check ranged attack for archers
         if (selectedUnit.range > 1) {
             const targets = getAttackTargets(selectedUnit);
             const rangedTarget = targets.find(t => t.x === x && t.y === y);
@@ -490,7 +673,9 @@ function getValidMoves(unit) {
             const terrain = map[ny][nx].terrain;
             if (terrain === TERRAIN.WATER || terrain === TERRAIN.MOUNTAIN) continue;
             
-            // Can move to empty or enemy occupied tiles
+            // Knights can only move 1 tile if target is rainforest
+            if (unit.type === 'KNIGHT' && terrain.slowsKnight && dist > 1) continue;
+            
             const occupant = units.find(u => u.x === nx && u.y === ny);
             if (occupant && occupant.owner === unit.owner) continue;
             
@@ -581,7 +766,6 @@ function resolveCombat(attacker, defender) {
     let atkDamage = attacker.attack;
     let defDamage = defender.attack;
     
-    // Terrain bonus for defender
     if (defenderTerrain.type === 'rainforest') defDamage += 3;
     if (defenderTerrain.type === 'tundra') defDamage += 2;
     
@@ -599,7 +783,6 @@ function resolveCombat(attacker, defender) {
     
     attacker.moves = 0;
 
-    // Handle deaths
     const attackerDied = attacker.hp <= 0;
     const defenderDied = defender.hp <= 0;
     
@@ -618,9 +801,9 @@ function checkWinCondition() {
     const playerCities = cities.filter(c => c.owner === 'player');
     const aiCities = cities.filter(c => c.owner === 'ai');
     
-    if (aiCities.length === 0 || aiUnits.length === 0) {
+    if (aiCities.length === 0 && aiUnits.length === 0) {
         endGame("VICTORY!", "victory");
-    } else if (playerCities.length === 0 || playerUnits.length === 0) {
+    } else if (playerCities.length === 0 && playerUnits.length === 0) {
         endGame("DEFEAT!", "defeat");
     }
 }
@@ -653,12 +836,15 @@ function endGame(message, type) {
 }
 
 function updateInfoPanel(tile, unit, city) {
-    let content = `<p><strong>Pos:</strong> (${tile.x}, ${tile.y})</p>`;
-    content += `<p><strong>Terrain:</strong> <span style="color:${tile.terrain.color}">${tile.terrain.label}</span></p>`;
-
-    if (city) {
-        content += `<p><strong>City:</strong> ${city.name}</p>`;
+    if (fogOfWar[tile.y][tile.x]) {
+        tileInfoDisplay.innerHTML = '<p><em>Unknown territory</em></p>';
+        return;
     }
+    
+    let content = `<p><strong>Pos:</strong> (${tile.x}, ${tile.y})</p>`;
+    content += `<p><strong>Terrain:</strong> ${tile.terrain.label}</p>`;
+
+    if (city) content += `<p><strong>City:</strong> ${city.name}</p>`;
     
     if (unit) {
         content += `<p><strong>Unit:</strong> ${unit.icon} ${unit.name}</p>`;
@@ -675,6 +861,7 @@ function updateUI() {
     playerDisplay.textContent = isPlayerTurn ? "Your Turn" : "AI Thinking...";
     playerDisplay.className = isPlayerTurn ? "player-turn" : "enemy-turn";
     endTurnBtn.disabled = !isPlayerTurn || gameOver;
+    updateTrainingDisplay();
 }
 
 // --- TURN SYSTEM ---
@@ -691,6 +878,8 @@ restartBtn.addEventListener('click', () => {
 function endPlayerTurn() {
     isPlayerTurn = false;
     selectedUnit = null;
+    
+    processTraining(trainingQueue, 'player');
     updateUI();
     
     setTimeout(aiTurn, 600);
@@ -699,20 +888,19 @@ function endPlayerTurn() {
 function aiTurn() {
     if (gameOver) return;
 
-    // AI trains units
+    processTraining(aiTrainingQueue, 'ai');
+
     const aiCity = cities.find(c => c.owner === 'ai');
-    if (aiCity && Math.random() > 0.5) {
-        const occupied = units.find(u => u.x === aiCity.x && u.y === aiCity.y);
-        if (!occupied) {
-            const types = ['WARRIOR', 'ARCHER', 'KNIGHT'];
-            const randomType = types[Math.floor(Math.random() * types.length)];
-            const newUnit = createUnit(randomType, aiCity.x, aiCity.y, 'ai');
-            newUnit.moves = 0;
-            units.push(newUnit);
-        }
+    if (aiCity && aiTrainingQueue.length === 0 && Math.random() > 0.4) {
+        const types = ['WARRIOR', 'ARCHER', 'KNIGHT'];
+        const randomType = types[Math.floor(Math.random() * types.length)];
+        aiTrainingQueue.push({
+            city: aiCity,
+            unitType: randomType,
+            turnsLeft: UNIT_TYPES[randomType].trainTime
+        });
     }
 
-    // AI moves units
     const aiUnits = units.filter(u => u.owner === 'ai' && u.moves > 0);
     const playerUnits = units.filter(u => u.owner === 'player');
     const playerCities = cities.filter(c => c.owner === 'player');
@@ -720,7 +908,6 @@ function aiTurn() {
     aiUnits.forEach(unit => {
         if (gameOver || unit.moves <= 0) return;
         
-        // Archers try ranged attack first
         if (unit.range > 1) {
             const targets = getAttackTargets(unit);
             if (targets.length > 0) {
@@ -739,18 +926,13 @@ function aiTurn() {
         const validMoves = getValidMoves(unit);
         if (validMoves.length === 0) return;
 
-        // Attack if possible
-        const attackMove = validMoves.find(m => {
-            const enemy = playerUnits.find(p => p.x === m.x && p.y === m.y);
-            return enemy !== undefined;
-        });
+        const attackMove = validMoves.find(m => playerUnits.find(p => p.x === m.x && p.y === m.y));
 
         if (attackMove) {
             attemptMove(unit, attackMove.x, attackMove.y);
             return;
         }
 
-        // Move towards target
         let bestMove = null;
         let minDist = Infinity;
 
@@ -762,14 +944,11 @@ function aiTurn() {
             }
         });
 
-        if (bestMove) {
-            attemptMove(unit, bestMove.x, bestMove.y);
-        }
+        if (bestMove) attemptMove(unit, bestMove.x, bestMove.y);
     });
 
     if (gameOver) return;
 
-    // End AI turn
     turn++;
     isPlayerTurn = true;
     units.forEach(u => u.moves = u.maxMoves);
@@ -777,8 +956,4 @@ function aiTurn() {
     updateVision();
 }
 
-// Start
 initGame();
-
-
-
