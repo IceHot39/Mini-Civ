@@ -764,8 +764,10 @@ function captureCity(unit, city) {
     }
     
     if (oldOwner === 'player') {
-        checkVictory();
+        // Player loses immediately when their city is captured
+        endGame("DEFEAT!", "defeat");
     } else {
+        // AI eliminated - remove all their units
         units = units.filter(u => u.owner !== oldOwner);
         checkVictory();
     }
