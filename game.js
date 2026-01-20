@@ -1,6 +1,7 @@
 // CONFIGURATION
 const GRID_SIZE = 12;
 const TILE_SIZE = 50;
+const CANVAS_SIZE = GRID_SIZE * TILE_SIZE;
 
 // TERRAIN DEFINITIONS
 const TERRAIN = {
@@ -28,8 +29,10 @@ let turn = 1;
 let isPlayerTurn = true;
 let selectedUnit = null;
 let gameOver = false;
-let fogOfWar = [];
-let trainingQueue = []; // {city, unitType, turnsLeft}
+let fogOfWar = [];      // true = never seen (white fog)
+let explored = [];      // true = has been seen before
+let currentlyVisible = []; // true = can see right now
+let trainingQueue = [];
 let aiTrainingQueue = [];
 
 // DOM ELEMENTS
@@ -40,6 +43,12 @@ const playerDisplay = document.getElementById('player-display');
 const tileInfoDisplay = document.getElementById('tile-info');
 const endTurnBtn = document.getElementById('end-turn-btn');
 const restartBtn = document.getElementById('restart-btn');
+
+// Fix canvas size
+canvas.width = CANVAS_SIZE;
+canvas.height = CANVAS_SIZE;
+canvas.style.width = CANVAS_SIZE + 'px';
+canvas.style.height = CANVAS_SIZE + 'px';
 
 // --- INITIALIZATION ---
 
@@ -92,19 +101,28 @@ function generateMap() {
 
 function initFogOfWar() {
     fogOfWar = [];
+    explored = [];
+    currentlyVisible = [];
     for (let y = 0; y < GRID_SIZE; y++) {
-        let row = [];
+        let fogRow = [];
+        let expRow = [];
+        let visRow = [];
         for (let x = 0; x < GRID_SIZE; x++) {
-            row.push(true);
+            fogRow.push(true);
+            expRow.push(false);
+            visRow.push(false);
         }
-        fogOfWar.push(row);
+        fogOfWar.push(fogRow);
+        explored.push(expRow);
+        currentlyVisible.push(visRow);
     }
 }
 
 function updateVision() {
+    // Reset current visibility
     for (let y = 0; y < GRID_SIZE; y++) {
         for (let x = 0; x < GRID_SIZE; x++) {
-            fogOfWar[y][x] = true;
+            currentlyVisible[y][x] = false;
         }
     }
     
@@ -114,12 +132,14 @@ function updateVision() {
     ];
     
     playerEntities.forEach(entity => {
-        const visionRange = 3;
+        const visionRange = 2; // Reduced from 3 to 2
         for (let dy = -visionRange; dy <= visionRange; dy++) {
             for (let dx = -visionRange; dx <= visionRange; dx++) {
                 const nx = entity.x + dx;
                 const ny = entity.y + dy;
                 if (nx >= 0 && nx < GRID_SIZE && ny >= 0 && ny < GRID_SIZE) {
+                    currentlyVisible[ny][nx] = true;
+                    explored[ny][nx] = true;
                     fogOfWar[ny][nx] = false;
                 }
             }
@@ -176,7 +196,6 @@ function setupUnitButtons() {
     const controls = document.querySelector('.controls');
     if (!controls) return;
     
-    // Training queue display
     const queueDiv = document.createElement('div');
     queueDiv.id = 'training-queue';
     queueDiv.style.cssText = 'margin-bottom:10px;padding:8px;background:rgba(0,0,0,0.3);border-radius:4px;min-height:20px;';
@@ -245,7 +264,6 @@ function processTraining(queue, owner) {
                     showFloatingText(t.city.x, t.city.y, `${UNIT_TYPES[t.unitType].icon} Ready!`, '#2ecc71');
                 }
             } else {
-                // Spawn adjacent if city occupied
                 const adj = [{x:0,y:-1},{x:0,y:1},{x:-1,y:0},{x:1,y:0}];
                 for (const d of adj) {
                     const nx = t.city.x + d.x;
@@ -292,7 +310,7 @@ function showFloatingText(x, y, text, color) {
 }
 
 function createParticle(x, y, color) {
-    if (fogOfWar[y][x]) return; // Don't show particles in fog
+    if (!currentlyVisible[y][x]) return;
     
     for (let i = 0; i < 5; i++) {
         particles.push({
@@ -312,18 +330,16 @@ function createParticle(x, y, color) {
 
 // --- TERRAIN DRAWING ---
 
-function drawTerrain(x, y, tile) {
+function drawTerrain(x, y, tile, darkened) {
     const px = x * TILE_SIZE;
     const py = y * TILE_SIZE;
     const seed = tile.seed;
     
-    // Base color
     ctx.fillStyle = tile.terrain.color;
     ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
     
     if (tile.terrain.type === 'plains') {
-        // Grass texture
-        ctx.fillStyle = '#7db844';
+        ctx.fillStyle = darkened ? '#5a8030' : '#7db844';
         for (let i = 0; i < 8; i++) {
             const gx = px + ((seed * (i + 1) * 7) % TILE_SIZE);
             const gy = py + ((seed * (i + 2) * 11) % TILE_SIZE);
@@ -331,16 +347,12 @@ function drawTerrain(x, y, tile) {
         }
     }
     else if (tile.terrain.type === 'rainforest') {
-        // Trees
-        ctx.fillStyle = '#1e4620';
         for (let i = 0; i < 5; i++) {
             const tx = px + 5 + ((seed * (i + 1) * 13) % (TILE_SIZE - 15));
             const ty = py + 10 + ((seed * (i + 3) * 17) % (TILE_SIZE - 20));
-            // Tree trunk
-            ctx.fillStyle = '#4a3520';
+            ctx.fillStyle = darkened ? '#2a1a10' : '#4a3520';
             ctx.fillRect(tx + 4, ty + 8, 3, 6);
-            // Tree foliage
-            ctx.fillStyle = '#1e4620';
+            ctx.fillStyle = darkened ? '#0f2810' : '#1e4620';
             ctx.beginPath();
             ctx.moveTo(tx + 5, ty);
             ctx.lineTo(tx + 12, ty + 10);
@@ -350,8 +362,7 @@ function drawTerrain(x, y, tile) {
         }
     }
     else if (tile.terrain.type === 'tundra') {
-        // Snow flakes
-        ctx.fillStyle = '#fff';
+        ctx.fillStyle = darkened ? '#aaa' : '#fff';
         for (let i = 0; i < 12; i++) {
             const sx = px + ((seed * (i + 1) * 7) % TILE_SIZE);
             const sy = py + ((seed * (i + 2) * 11) % TILE_SIZE);
@@ -359,15 +370,13 @@ function drawTerrain(x, y, tile) {
             ctx.arc(sx, sy, 1.5, 0, Math.PI * 2);
             ctx.fill();
         }
-        // Snow patches
-        ctx.fillStyle = 'rgba(255,255,255,0.5)';
+        ctx.fillStyle = darkened ? 'rgba(200,200,200,0.4)' : 'rgba(255,255,255,0.5)';
         ctx.beginPath();
         ctx.ellipse(px + 15 + (seed % 20), py + 25, 12, 6, 0, 0, Math.PI * 2);
         ctx.fill();
     }
     else if (tile.terrain.type === 'water') {
-        // Waves
-        ctx.strokeStyle = '#3498db';
+        ctx.strokeStyle = darkened ? '#1a5a80' : '#3498db';
         ctx.lineWidth = 2;
         const time = Date.now() / 1000;
         for (let i = 0; i < 3; i++) {
@@ -380,8 +389,7 @@ function drawTerrain(x, y, tile) {
         }
     }
     else if (tile.terrain.type === 'mountain') {
-        // Mountain peaks
-        ctx.fillStyle = '#5a6a72';
+        ctx.fillStyle = darkened ? '#3a4a52' : '#5a6a72';
         ctx.beginPath();
         ctx.moveTo(px + 5, py + TILE_SIZE);
         ctx.lineTo(px + 20, py + 8);
@@ -389,7 +397,7 @@ function drawTerrain(x, y, tile) {
         ctx.closePath();
         ctx.fill();
         
-        ctx.fillStyle = '#4a5a62';
+        ctx.fillStyle = darkened ? '#2a3a42' : '#4a5a62';
         ctx.beginPath();
         ctx.moveTo(px + 25, py + TILE_SIZE);
         ctx.lineTo(px + 40, py + 15);
@@ -397,8 +405,7 @@ function drawTerrain(x, y, tile) {
         ctx.closePath();
         ctx.fill();
         
-        // Snow caps
-        ctx.fillStyle = '#fff';
+        ctx.fillStyle = darkened ? '#aaa' : '#fff';
         ctx.beginPath();
         ctx.moveTo(px + 15, py + 15);
         ctx.lineTo(px + 20, py + 8);
@@ -413,17 +420,21 @@ function drawTerrain(x, y, tile) {
         ctx.closePath();
         ctx.fill();
     }
+    
+    // Apply darkening overlay for explored but not visible
+    if (darkened) {
+        ctx.fillStyle = 'rgba(0,0,0,0.4)';
+        ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
+    }
 }
 
 function drawFog(x, y) {
     const px = x * TILE_SIZE;
     const py = y * TILE_SIZE;
     
-    // White fog
     ctx.fillStyle = '#d0d8e0';
     ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
     
-    // Fog texture
     ctx.fillStyle = 'rgba(255,255,255,0.6)';
     const seed = x * 100 + y;
     for (let i = 0; i < 6; i++) {
@@ -453,8 +464,7 @@ function update() {
     }
     
     for (let i = particles.length - 1; i >= 0; i--) {
-        // Remove particles in fog
-        if (fogOfWar[particles[i].tileY][particles[i].tileX]) {
+        if (!currentlyVisible[particles[i].tileY][particles[i].tileX]) {
             particles.splice(i, 1);
             continue;
         }
@@ -467,15 +477,20 @@ function update() {
 }
 
 function draw() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
 
     // Draw Map
     for (let y = 0; y < GRID_SIZE; y++) {
         for (let x = 0; x < GRID_SIZE; x++) {
-            if (fogOfWar[y][x]) {
+            if (!explored[y][x]) {
+                // Never seen - white fog
                 drawFog(x, y);
+            } else if (!currentlyVisible[y][x]) {
+                // Explored but not currently visible - darkened terrain
+                drawTerrain(x, y, map[y][x], true);
             } else {
-                drawTerrain(x, y, map[y][x]);
+                // Currently visible - normal terrain
+                drawTerrain(x, y, map[y][x], false);
             }
             
             ctx.strokeStyle = 'rgba(0,0,0,0.1)';
@@ -507,30 +522,33 @@ function draw() {
         }
     }
 
-    // Draw Cities (only if visible)
+    // Draw Cities (only if currently visible or explored for player cities)
     cities.forEach(city => {
-        if (fogOfWar[city.y][city.x]) return;
+        if (!explored[city.y][city.x]) return;
+        if (city.owner === 'ai' && !currentlyVisible[city.y][city.x]) return;
+        
+        const darkened = !currentlyVisible[city.y][city.x];
         
         ctx.fillStyle = 'rgba(0,0,0,0.3)';
         ctx.fillRect(city.x * TILE_SIZE + 6, city.y * TILE_SIZE + 6, TILE_SIZE - 6, TILE_SIZE - 6);
         
-        ctx.fillStyle = city.color;
+        ctx.fillStyle = darkened ? '#007788' : city.color;
         ctx.fillRect(city.x * TILE_SIZE + 8, city.y * TILE_SIZE + 8, TILE_SIZE - 16, TILE_SIZE - 16);
         
-        ctx.strokeStyle = '#fff';
+        ctx.strokeStyle = darkened ? '#aaa' : '#fff';
         ctx.lineWidth = 2;
         ctx.strokeRect(city.x * TILE_SIZE + 8, city.y * TILE_SIZE + 8, TILE_SIZE - 16, TILE_SIZE - 16);
         
-        ctx.fillStyle = '#fff';
+        ctx.fillStyle = darkened ? '#aaa' : '#fff';
         ctx.font = 'bold 12px Arial';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(city.owner === 'player' ? 'P' : 'E', city.x * TILE_SIZE + TILE_SIZE/2, city.y * TILE_SIZE + TILE_SIZE/2);
     });
 
-    // Draw Units (only if visible)
+    // Draw Units (only if currently visible)
     units.forEach(unit => {
-        if (fogOfWar[unit.y][unit.x]) return;
+        if (!currentlyVisible[unit.y][unit.x]) return;
         
         const cx = unit.x * TILE_SIZE + TILE_SIZE / 2;
         const cy = unit.y * TILE_SIZE + TILE_SIZE / 2;
@@ -581,7 +599,7 @@ function draw() {
         ctx.fillRect(barX, barY, barWidth * hpPercent, barHeight);
     });
 
-    // Particles (already filtered for fog in update)
+    // Particles
     particles.forEach(p => {
         ctx.globalAlpha = p.life / p.maxLife;
         ctx.fillStyle = p.color;
@@ -611,11 +629,8 @@ canvas.addEventListener('click', (e) => {
     if (gameOver || !isPlayerTurn) return;
 
     const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    
-    const x = Math.floor((e.clientX - rect.left) * scaleX / TILE_SIZE);
-    const y = Math.floor((e.clientY - rect.top) * scaleY / TILE_SIZE);
+    const x = Math.floor((e.clientX - rect.left) / TILE_SIZE);
+    const y = Math.floor((e.clientY - rect.top) / TILE_SIZE);
 
     if (x >= 0 && x < GRID_SIZE && y >= 0 && y < GRID_SIZE) {
         handleTileClick(x, y);
@@ -673,7 +688,6 @@ function getValidMoves(unit) {
             const terrain = map[ny][nx].terrain;
             if (terrain === TERRAIN.WATER || terrain === TERRAIN.MOUNTAIN) continue;
             
-            // Knights can only move 1 tile if target is rainforest
             if (unit.type === 'KNIGHT' && terrain.slowsKnight && dist > 1) continue;
             
             const occupant = units.find(u => u.x === nx && u.y === ny);
@@ -702,7 +716,7 @@ function getAttackTargets(unit) {
             if (nx < 0 || nx >= GRID_SIZE || ny < 0 || ny >= GRID_SIZE) continue;
             
             const enemy = units.find(u => u.x === nx && u.y === ny && u.owner !== unit.owner);
-            if (enemy && !fogOfWar[ny][nx]) {
+            if (enemy && currentlyVisible[ny][nx]) {
                 targets.push({ x: nx, y: ny });
             }
         }
@@ -723,7 +737,6 @@ function rangedAttack(attacker, defender) {
     if (defender.hp <= 0) {
         units = units.filter(u => u !== defender);
         showFloatingText(defender.x, defender.y, 'Killed!', '#e74c3c');
-        checkWinCondition();
     }
     
     updateVision();
@@ -751,13 +764,19 @@ function attemptMove(unit, targetX, targetY) {
 }
 
 function captureCity(unit, city) {
+    const oldOwner = city.owner;
     city.owner = unit.owner;
     city.color = unit.owner === 'player' ? '#00ffff' : '#e74c3c';
     
     showFloatingText(city.x, city.y, 'Captured!', '#f1c40f');
     createParticle(city.x, city.y, '#f1c40f');
     
-    checkWinCondition();
+    // Win by capturing city
+    if (oldOwner === 'ai') {
+        endGame("VICTORY!", "victory");
+    } else if (oldOwner === 'player') {
+        endGame("DEFEAT!", "defeat");
+    }
 }
 
 function resolveCombat(attacker, defender) {
@@ -792,20 +811,6 @@ function resolveCombat(attacker, defender) {
     }
     
     units = units.filter(u => u.hp > 0);
-    checkWinCondition();
-}
-
-function checkWinCondition() {
-    const playerUnits = units.filter(u => u.owner === 'player');
-    const aiUnits = units.filter(u => u.owner === 'ai');
-    const playerCities = cities.filter(c => c.owner === 'player');
-    const aiCities = cities.filter(c => c.owner === 'ai');
-    
-    if (aiCities.length === 0 && aiUnits.length === 0) {
-        endGame("VICTORY!", "victory");
-    } else if (playerCities.length === 0 && playerUnits.length === 0) {
-        endGame("DEFEAT!", "defeat");
-    }
 }
 
 function endGame(message, type) {
@@ -816,7 +821,7 @@ function endGame(message, type) {
     
     setTimeout(() => {
         ctx.fillStyle = 'rgba(0,0,0,0.85)';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
         
         ctx.fillStyle = color;
         ctx.font = 'bold 42px Arial';
@@ -824,8 +829,8 @@ function endGame(message, type) {
         ctx.textBaseline = 'middle';
         ctx.strokeStyle = 'black';
         ctx.lineWidth = 4;
-        ctx.strokeText(message, canvas.width/2, canvas.height/2);
-        ctx.fillText(message, canvas.width/2, canvas.height/2);
+        ctx.strokeText(message, CANVAS_SIZE/2, CANVAS_SIZE/2);
+        ctx.fillText(message, CANVAS_SIZE/2, CANVAS_SIZE/2);
         
         playerDisplay.textContent = message;
         playerDisplay.style.color = color;
@@ -836,7 +841,7 @@ function endGame(message, type) {
 }
 
 function updateInfoPanel(tile, unit, city) {
-    if (fogOfWar[tile.y][tile.x]) {
+    if (!explored[tile.y][tile.x]) {
         tileInfoDisplay.innerHTML = '<p><em>Unknown territory</em></p>';
         return;
     }
@@ -844,9 +849,11 @@ function updateInfoPanel(tile, unit, city) {
     let content = `<p><strong>Pos:</strong> (${tile.x}, ${tile.y})</p>`;
     content += `<p><strong>Terrain:</strong> ${tile.terrain.label}</p>`;
 
-    if (city) content += `<p><strong>City:</strong> ${city.name}</p>`;
+    if (city && (city.owner === 'player' || currentlyVisible[city.y][city.x])) {
+        content += `<p><strong>City:</strong> ${city.name}</p>`;
+    }
     
-    if (unit) {
+    if (unit && currentlyVisible[unit.y][unit.x]) {
         content += `<p><strong>Unit:</strong> ${unit.icon} ${unit.name}</p>`;
         content += `<p><strong>HP:</strong> ${unit.hp}/${unit.maxHp}</p>`;
         content += `<p><strong>ATK:</strong> ${unit.attack} <strong>DEF:</strong> ${unit.defense}</p>`;
@@ -908,6 +915,43 @@ function aiTurn() {
     aiUnits.forEach(unit => {
         if (gameOver || unit.moves <= 0) return;
         
+        // Check if player is threatening AI city - prioritize defense
+        if (aiCity) {
+            const playerNearCity = playerUnits.find(p => {
+                const dist = Math.abs(p.x - aiCity.x) + Math.abs(p.y - aiCity.y);
+                return dist <= 3;
+            });
+            
+            if (playerNearCity) {
+                // Try to attack the threatening player unit
+                const validMoves = getValidMoves(unit);
+                const attackMove = validMoves.find(m => m.x === playerNearCity.x && m.y === playerNearCity.y);
+                
+                if (attackMove) {
+                    attemptMove(unit, attackMove.x, attackMove.y);
+                    return;
+                }
+                
+                // Move towards the threat
+                let bestMove = null;
+                let minDist = Infinity;
+                
+                validMoves.forEach(move => {
+                    const dist = Math.abs(move.x - playerNearCity.x) + Math.abs(move.y - playerNearCity.y);
+                    if (dist < minDist) {
+                        minDist = dist;
+                        bestMove = move;
+                    }
+                });
+                
+                if (bestMove) {
+                    attemptMove(unit, bestMove.x, bestMove.y);
+                    return;
+                }
+            }
+        }
+        
+        // Archers try ranged attack
         if (unit.range > 1) {
             const targets = getAttackTargets(unit);
             if (targets.length > 0) {
@@ -920,7 +964,8 @@ function aiTurn() {
             }
         }
         
-        const target = playerUnits[0] || playerCities[0];
+        // Default: move towards player city
+        const target = playerCities[0] || playerUnits[0];
         if (!target) return;
 
         const validMoves = getValidMoves(unit);
