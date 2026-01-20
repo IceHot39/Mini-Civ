@@ -1,8 +1,6 @@
 // CONFIGURATION
-const GRID_RADIUS = 5; // Hexagonal map radius
+const GRID_RADIUS = 5;
 const HEX_SIZE = 34;
-const HEX_HEIGHT = HEX_SIZE * 2;
-const HEX_WIDTH = Math.sqrt(3) * HEX_SIZE;
 const CANVAS_WIDTH = 700;
 const CANVAS_HEIGHT = 650;
 const CENTER_X = CANVAS_WIDTH / 2;
@@ -10,7 +8,7 @@ const CENTER_Y = CANVAS_HEIGHT / 2;
 
 // TERRAIN DEFINITIONS
 const TERRAIN = {
-    TUNDRA: { type: 'tundra', color: '#e8f4f8', label: 'Tundra', defenseBonus: 4 },
+    TUNDRA: { type: 'tundra', color: '#8B7355', label: 'Tundra', defenseBonus: 4 },
     PLAINS: { type: 'plains', color: '#90c956', label: 'Plains', defenseBonus: 0 },
     RAINFOREST: { type: 'rainforest', color: '#2d5a27', label: 'Rainforest', defenseBonus: 6, slowsKnight: true },
     WATER: { type: 'water', color: '#2980b9', label: 'Water', defenseBonus: 0 },
@@ -51,19 +49,19 @@ const restartBtn = document.getElementById('restart-btn');
 canvas.width = CANVAS_WIDTH;
 canvas.height = CANVAS_HEIGHT;
 
-// --- HEX MATH (Flat-top hexagons) ---
+// --- HEX MATH (Pointy-top hexagons for proper tiling) ---
 
 function hexToPixel(q, r) {
-    const x = CENTER_X + HEX_SIZE * (3/2 * q);
-    const y = CENTER_Y + HEX_SIZE * (Math.sqrt(3)/2 * q + Math.sqrt(3) * r);
+    const x = CENTER_X + HEX_SIZE * Math.sqrt(3) * (q + r / 2);
+    const y = CENTER_Y + HEX_SIZE * 3 / 2 * r;
     return { x, y };
 }
 
 function pixelToHex(px, py) {
     const x = px - CENTER_X;
     const y = py - CENTER_Y;
-    const q = (2/3 * x) / HEX_SIZE;
-    const r = (-1/3 * x + Math.sqrt(3)/3 * y) / HEX_SIZE;
+    const q = (Math.sqrt(3) / 3 * x - 1 / 3 * y) / HEX_SIZE;
+    const r = (2 / 3 * y) / HEX_SIZE;
     return hexRound(q, r);
 }
 
@@ -123,7 +121,6 @@ function initGame() {
 }
 
 function generateHexMap() {
-    // Generate hexagonal shaped map
     for (let q = -GRID_RADIUS; q <= GRID_RADIUS; q++) {
         const r1 = Math.max(-GRID_RADIUS, -q - GRID_RADIUS);
         const r2 = Math.min(GRID_RADIUS, -q + GRID_RADIUS);
@@ -173,13 +170,11 @@ function spawnEntities() {
         h.terrain !== TERRAIN.WATER && h.terrain !== TERRAIN.MOUNTAIN
     );
     
-    // Player spawns in bottom area
     const playerHexes = allHexes.filter(h => h.r > 1);
     const playerStart = playerHexes[Math.floor(Math.random() * playerHexes.length)];
     cities.push({ q: playerStart.q, r: playerStart.r, owner: 'player', color: '#00ffff', name: 'Capital' });
     units.push(createUnit('WARRIOR', playerStart.q, playerStart.r, 'player'));
 
-    // AI spawns in top area
     const aiHexes = allHexes.filter(h => h.r < -1 && hexDistance(h.q, h.r, playerStart.q, playerStart.r) > 4);
     const aiStart = aiHexes[Math.floor(Math.random() * aiHexes.length)] || allHexes.find(h => h.r < 0);
     cities.push({ q: aiStart.q, r: aiStart.r, owner: 'ai', color: '#e74c3c', name: 'Enemy City' });
@@ -317,10 +312,11 @@ function createParticle(q, r, color) {
 
 // --- DRAWING ---
 
+// Pointy-top hexagon
 function drawHex(cx, cy, size) {
     ctx.beginPath();
     for (let i = 0; i < 6; i++) {
-        const angle = Math.PI / 180 * (60 * i - 30);
+        const angle = Math.PI / 180 * (60 * i - 90); // -90 for pointy top
         const x = cx + size * Math.cos(angle);
         const y = cy + size * Math.sin(angle);
         if (i === 0) ctx.moveTo(x, y);
@@ -360,13 +356,18 @@ function drawTerrainHex(tile, darkened) {
             ctx.fill();
         }
     } else if (tile.terrain.type === 'tundra') {
-        ctx.fillStyle = darkened ? '#aaa' : '#fff';
-        for (let i = 0; i < 6; i++) {
-            const sx = pos.x - 12 + ((seed * (i+1) * 7) % 24);
-            const sy = pos.y - 12 + ((seed * (i+2) * 11) % 24);
+        // Brown tundra with white snowflakes
+        ctx.fillStyle = darkened ? '#ddd' : '#fff';
+        for (let i = 0; i < 8; i++) {
+            const sx = pos.x - 14 + ((seed * (i+1) * 7) % 28);
+            const sy = pos.y - 14 + ((seed * (i+2) * 11) % 28);
+            // Snowflake shape
             ctx.beginPath();
-            ctx.arc(sx, sy, 1.5, 0, Math.PI * 2);
+            ctx.arc(sx, sy, 2, 0, Math.PI * 2);
             ctx.fill();
+            // Small cross for snowflake detail
+            ctx.fillRect(sx - 3, sy - 0.5, 6, 1);
+            ctx.fillRect(sx - 0.5, sy - 3, 1, 6);
         }
     } else if (tile.terrain.type === 'water') {
         ctx.strokeStyle = darkened ? '#1a5a80' : '#3498db';
@@ -452,11 +453,9 @@ function drawCity(city) {
     const wallColor = dark ? '#555' : '#d4c4a0';
     const roofColor = dark ? '#333' : (city.owner === 'player' ? '#2a6070' : '#702a2a');
     
-    // Walls
     ctx.fillStyle = wallColor;
     ctx.fillRect(pos.x - 14, pos.y - 2, 28, 14);
     
-    // Main tower
     ctx.fillRect(pos.x - 6, pos.y - 14, 12, 22);
     ctx.fillStyle = roofColor;
     ctx.beginPath();
@@ -466,7 +465,6 @@ function drawCity(city) {
     ctx.closePath();
     ctx.fill();
     
-    // Side towers
     ctx.fillStyle = wallColor;
     ctx.fillRect(pos.x - 16, pos.y - 8, 6, 14);
     ctx.fillRect(pos.x + 10, pos.y - 8, 6, 14);
@@ -484,7 +482,6 @@ function drawCity(city) {
     ctx.closePath();
     ctx.fill();
     
-    // Flag
     ctx.fillStyle = dark ? '#666' : (city.owner === 'player' ? '#00ffff' : '#e74c3c');
     ctx.fillRect(pos.x, pos.y - 22, 1, -6);
     ctx.beginPath();
@@ -502,13 +499,11 @@ function drawUnit(unit) {
     const pos = hexToPixel(unit.q, unit.r);
     const r = 12;
     
-    // Shadow
     ctx.beginPath();
     ctx.arc(pos.x + 2, pos.y + 2, r, 0, Math.PI * 2);
     ctx.fillStyle = 'rgba(0,0,0,0.3)';
     ctx.fill();
     
-    // Body
     ctx.beginPath();
     ctx.arc(pos.x, pos.y, r, 0, Math.PI * 2);
     ctx.fillStyle = unit.color;
@@ -517,14 +512,12 @@ function drawUnit(unit) {
     ctx.lineWidth = selectedUnit === unit ? 3 : 2;
     ctx.stroke();
     
-    // Icon
     ctx.fillStyle = '#fff';
     ctx.font = '14px Arial';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(unit.icon, pos.x, pos.y);
     
-    // Move indicator
     if (unit.moves > 0 && unit.owner === 'player') {
         ctx.beginPath();
         ctx.arc(pos.x + 8, pos.y - 8, 4, 0, Math.PI * 2);
@@ -532,7 +525,6 @@ function drawUnit(unit) {
         ctx.fill();
     }
     
-    // HP bar
     const bw = 22, bh = 3, bx = pos.x - 11, by = pos.y - 18;
     ctx.fillStyle = '#333';
     ctx.fillRect(bx, by, bw, bh);
@@ -567,7 +559,6 @@ function draw() {
     ctx.fillStyle = '#1a252f';
     ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
     
-    // Draw hexes
     for (const key in map) {
         const tile = map[key];
         if (!explored[key]) drawFogHex(tile.q, tile.r);
@@ -575,7 +566,6 @@ function draw() {
         else drawTerrainHex(tile, false);
     }
     
-    // Valid moves
     if (selectedUnit && selectedUnit.owner === 'player' && isPlayerTurn && selectedUnit.moves > 0) {
         getValidMoves(selectedUnit).forEach(m => {
             const pos = hexToPixel(m.q, m.r);
@@ -602,7 +592,6 @@ function draw() {
     cities.forEach(c => drawCity(c));
     units.forEach(u => drawUnit(u));
     
-    // Particles
     particles.forEach(p => {
         ctx.globalAlpha = p.life / p.maxLife;
         ctx.fillStyle = p.color;
@@ -612,7 +601,6 @@ function draw() {
         ctx.globalAlpha = 1;
     });
     
-    // Floating text
     floatingTexts.forEach(ft => {
         ctx.globalAlpha = ft.life / ft.maxLife;
         ctx.font = 'bold 14px Arial';
@@ -838,23 +826,63 @@ function aiTurn() {
     aiUnits.forEach(unit => {
         if (gameOver || unit.moves <= 0) return;
         
-        // Defend city
+        // PRIORITY 1: If player can capture AI city, defend it
         if (aiCity) {
             const threat = playerUnits.find(p => hexDistance(p.q, p.r, aiCity.q, aiCity.r) <= p.maxMoves);
+            
             if (threat) {
+                // Check if city is undefended
+                const cityDefender = units.find(u => u.owner === 'ai' && u.q === aiCity.q && u.r === aiCity.r);
+                
+                // PRIORITY 1A: Move INTO city if no defender there
+                if (!cityDefender) {
+                    const moves = getValidMoves(unit);
+                    const moveToCity = moves.find(m => m.q === aiCity.q && m.r === aiCity.r);
+                    if (moveToCity) {
+                        attemptMove(unit, aiCity.q, aiCity.r);
+                        return;
+                    }
+                }
+                
+                // PRIORITY 1B: Attack the threatening unit
                 if (unit.rangedOnly && unit.range > 1) {
                     const targets = getAttackTargets(unit);
-                    if (targets.find(t => t.q === threat.q && t.r === threat.r)) { rangedAttack(unit, threat); return; }
+                    if (targets.find(t => t.q === threat.q && t.r === threat.r)) {
+                        rangedAttack(unit, threat);
+                        return;
+                    }
+                } else {
+                    const moves = getValidMoves(unit);
+                    const atk = moves.find(m => m.q === threat.q && m.r === threat.r);
+                    if (atk) {
+                        attemptMove(unit, atk.q, atk.r);
+                        return;
+                    }
                 }
+                
+                // PRIORITY 1C: Move towards threat or city
                 const moves = getValidMoves(unit);
-                const atk = moves.find(m => m.q === threat.q && m.r === threat.r);
-                if (atk && !unit.rangedOnly) { attemptMove(unit, atk.q, atk.r); return; }
                 let best = null, minD = Infinity;
-                moves.forEach(m => { const d = hexDistance(m.q, m.r, threat.q, threat.r); if (d < minD) { minD = d; best = m; } });
+                
+                // Prefer moving to city if close
+                const distToCity = hexDistance(unit.q, unit.r, aiCity.q, aiCity.r);
+                if (distToCity <= 2 && !cityDefender) {
+                    moves.forEach(m => {
+                        const d = hexDistance(m.q, m.r, aiCity.q, aiCity.r);
+                        if (d < minD) { minD = d; best = m; }
+                    });
+                } else {
+                    moves.forEach(m => {
+                        const d = hexDistance(m.q, m.r, threat.q, threat.r);
+                        if (d < minD) { minD = d; best = m; }
+                    });
+                }
+                
                 if (best) { attemptMove(unit, best.q, best.r); return; }
             }
         }
         
+        // Normal behavior: ranged attack
         if (unit.rangedOnly && unit.range > 1) {
             const targets = getAttackTargets(unit);
             if (targets.length > 0) {
@@ -863,6 +891,7 @@ function aiTurn() {
             }
         }
         
+        // Move towards player city
         const target = playerCities[0] || playerUnits[0];
         if (!target) return;
         const moves = getValidMoves(unit);
