@@ -22,9 +22,9 @@ function drawStartMenu() {
     ctx.font = '18px Arial';
     ctx.fillText('Opponents:', CANVAS_WIDTH/2, 170);
     
-    ctx.fillStyle = numAIs === 1 ? '#27ae60' : '#555';
+    ctx.fillStyle = numAIs === 1 ? '#27ae60' : '#444';
     ctx.fillRect(CANVAS_WIDTH/2 - 130, 190, 120, 40);
-    ctx.fillStyle = numAIs === 2 ? '#e67e22' : '#555';
+    ctx.fillStyle = numAIs === 2 ? '#27ae60' : '#444';
     ctx.fillRect(CANVAS_WIDTH/2 + 10, 190, 120, 40);
     
     ctx.fillStyle = '#fff';
@@ -37,11 +37,11 @@ function drawStartMenu() {
     ctx.font = '18px Arial';
     ctx.fillText('Difficulty:', CANVAS_WIDTH/2, 280);
     
-    ctx.fillStyle = difficulty === 'easy' ? '#27ae60' : '#555';
+    ctx.fillStyle = difficulty === 'easy' ? '#27ae60' : '#444';
     ctx.fillRect(CANVAS_WIDTH/2 - 195, 300, 120, 40);
-    ctx.fillStyle = difficulty === 'normal' ? '#e67e22' : '#555';
+    ctx.fillStyle = difficulty === 'normal' ? '#e67e22' : '#444';
     ctx.fillRect(CANVAS_WIDTH/2 - 60, 300, 120, 40);
-    ctx.fillStyle = difficulty === 'hard' ? '#c0392b' : '#555';
+    ctx.fillStyle = difficulty === 'hard' ? '#c0392b' : '#444';
     ctx.fillRect(CANVAS_WIDTH/2 + 75, 300, 120, 40);
     
     ctx.fillStyle = '#fff';
@@ -55,18 +55,18 @@ function drawStartMenu() {
     ctx.font = '12px Arial';
     if (difficulty === 'easy') ctx.fillText('Standard game', CANVAS_WIDTH/2, 365);
     else if (difficulty === 'normal') ctx.fillText('AI gets +15% combat bonus', CANVAS_WIDTH/2, 365);
-    else ctx.fillText('AI +15% combat & faster training', CANVAS_WIDTH/2, 365);
+    else ctx.fillText('AI +15% combat & you train slower (4 turns)', CANVAS_WIDTH/2, 365);
     
     // Start button
     ctx.fillStyle = '#3498db';
-    ctx.fillRect(CANVAS_WIDTH/2 - 80, 400, 160, 50);
+    ctx.fillRect(CANVAS_WIDTH/2 - 80, 410, 160, 50);
     ctx.fillStyle = '#fff';
     ctx.font = 'bold 20px Arial';
-    ctx.fillText('START', CANVAS_WIDTH/2, 432);
+    ctx.fillText('START', CANVAS_WIDTH/2, 442);
     
     ctx.font = '12px Arial';
     ctx.fillStyle = '#95a5a6';
-    ctx.fillText('Capture enemy cities to win!', CANVAS_WIDTH/2, 480);
+    ctx.fillText('Capture enemy cities to win!', CANVAS_WIDTH/2, 500);
 }
 
 function handleStartClick(e) {
@@ -75,19 +75,19 @@ function handleStartClick(e) {
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     
-    // Opponent buttons
+    // Opponent buttons (y: 190-230)
     if (y >= 190 && y <= 230) {
         if (x >= CANVAS_WIDTH/2 - 130 && x <= CANVAS_WIDTH/2 - 10) { numAIs = 1; drawStartMenu(); }
         else if (x >= CANVAS_WIDTH/2 + 10 && x <= CANVAS_WIDTH/2 + 130) { numAIs = 2; drawStartMenu(); }
     }
-    // Difficulty buttons
+    // Difficulty buttons (y: 300-340)
     if (y >= 300 && y <= 340) {
         if (x >= CANVAS_WIDTH/2 - 195 && x <= CANVAS_WIDTH/2 - 75) { difficulty = 'easy'; drawStartMenu(); }
         else if (x >= CANVAS_WIDTH/2 - 60 && x <= CANVAS_WIDTH/2 + 60) { difficulty = 'normal'; drawStartMenu(); }
         else if (x >= CANVAS_WIDTH/2 + 75 && x <= CANVAS_WIDTH/2 + 195) { difficulty = 'hard'; drawStartMenu(); }
     }
-    // Start button
-    if (y >= 400 && y <= 450 && x >= CANVAS_WIDTH/2 - 80 && x <= CANVAS_WIDTH/2 + 80) {
+    // Start button (y: 410-460)
+    if (y >= 410 && y <= 460 && x >= CANVAS_WIDTH/2 - 80 && x <= CANVAS_WIDTH/2 + 80) {
         startGame();
     }
 } // CONFIGURATION
