@@ -293,33 +293,35 @@ function updateVision() {
 
 function spawnEntities() {
     const allHexes = Object.values(map).filter(h => !h.terrain.impassable);
+    const minDistance = 5;
+    const spawnPoints = [];
     
-    function getHexNearAngle(angle, radius) {
-        const targetQ = Math.round(Math.cos(angle * Math.PI / 180) * radius);
-        const targetR = Math.round(Math.sin(angle * Math.PI / 180) * radius);
-        let best = null, minD = Infinity;
-        allHexes.forEach(h => {
-            const d = hexDistance(h.q, h.r, targetQ, targetR);
-            if (d < minD) { minD = d; best = h; }
+    // Find random spawn locations at least 5 tiles apart
+    function findRandomSpawn() {
+        const candidates = allHexes.filter(h => {
+            // Must be at least minDistance from all existing spawn points
+            return spawnPoints.every(sp => hexDistance(h.q, h.r, sp.q, sp.r) >= minDistance);
         });
-        return best;
+        if (candidates.length === 0) return null;
+        return candidates[Math.floor(Math.random() * candidates.length)];
     }
     
-    const spawnRadius = GRID_RADIUS - 1;
-    
-    // Player at bottom
-    const playerStart = getHexNearAngle(90, spawnRadius);
+    // Player spawn
+    const playerStart = findRandomSpawn();
+    spawnPoints.push(playerStart);
     cities.push({ q: playerStart.q, r: playerStart.r, owner: 'player', color: '#00ffff', name: 'Capital' });
     units.push(createUnit('WARRIOR', playerStart.q, playerStart.r, 'player'));
 
-    // AI 1 at top-right
-    const ai1Start = getHexNearAngle(-30, spawnRadius);
+    // AI 1 spawn
+    const ai1Start = findRandomSpawn();
+    spawnPoints.push(ai1Start);
     cities.push({ q: ai1Start.q, r: ai1Start.r, owner: 'ai1', color: '#e74c3c', name: 'Red City' });
     units.push(createUnit('WARRIOR', ai1Start.q, ai1Start.r, 'ai1'));
 
-    // AI 2 at top-left (if enabled)
+    // AI 2 spawn (if enabled)
     if (numAIs >= 2) {
-        const ai2Start = getHexNearAngle(-150, spawnRadius);
+        const ai2Start = findRandomSpawn();
+        spawnPoints.push(ai2Start);
         cities.push({ q: ai2Start.q, r: ai2Start.r, owner: 'ai2', color: '#9b59b6', name: 'Purple City' });
         units.push(createUnit('WARRIOR', ai2Start.q, ai2Start.r, 'ai2'));
     }
@@ -516,7 +518,6 @@ function drawFogHex(q, r) {
 function drawCity(city) {
     const key = `${city.q},${city.r}`;
     if (!explored[key]) return;
-    if (city.owner !== 'player' && !currentlyVisible[key]) return;
     
     const pos = hexToPixel(city.q, city.r);
     const dark = !currentlyVisible[key];
