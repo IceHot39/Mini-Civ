@@ -250,26 +250,38 @@ function updateVision() {
 function spawnEntities() {
     const allHexes = Object.values(map).filter(h => !h.terrain.impassable);
     
-    // Player in bottom
-    const playerHexes = allHexes.filter(h => h.r > 2);
-    const playerStart = playerHexes[Math.floor(Math.random() * playerHexes.length)];
+    // Spawn in thirds of the map (equidistant positions)
+    // Player at bottom (angle 270 degrees from center)
+    // AI1 at top-right (angle 30 degrees)
+    // AI2 at top-left (angle 150 degrees)
+    
+    function getHexNearAngle(angle, radius) {
+        const targetQ = Math.round(Math.cos(angle * Math.PI / 180) * radius);
+        const targetR = Math.round(Math.sin(angle * Math.PI / 180) * radius);
+        // Find closest valid hex
+        let best = null, minD = Infinity;
+        allHexes.forEach(h => {
+            const d = hexDistance(h.q, h.r, targetQ, targetR);
+            if (d < minD) { minD = d; best = h; }
+        });
+        return best;
+    }
+    
+    const spawnRadius = GRID_RADIUS - 1;
+    
+    // Player at bottom
+    const playerStart = getHexNearAngle(90, spawnRadius); // 90 = down in our coord system
     cities.push({ q: playerStart.q, r: playerStart.r, owner: 'player', color: '#00ffff', name: 'Capital' });
     units.push(createUnit('WARRIOR', playerStart.q, playerStart.r, 'player'));
 
-    // AI 1 in top
-    const ai1Hexes = allHexes.filter(h => h.r < -2 && hexDistance(h.q, h.r, playerStart.q, playerStart.r) > 5);
-    const ai1Start = ai1Hexes[Math.floor(Math.random() * ai1Hexes.length)] || allHexes.find(h => h.r < -1);
+    // AI 1 at top-right (120 degrees apart)
+    const ai1Start = getHexNearAngle(-30, spawnRadius);
     cities.push({ q: ai1Start.q, r: ai1Start.r, owner: 'ai1', color: '#e74c3c', name: 'Red City' });
     units.push(createUnit('WARRIOR', ai1Start.q, ai1Start.r, 'ai1'));
 
-    // AI 2 if enabled
+    // AI 2 at top-left (if enabled)
     if (numAIs >= 2) {
-        const ai2Hexes = allHexes.filter(h => 
-            Math.abs(h.r) <= 2 && 
-            hexDistance(h.q, h.r, playerStart.q, playerStart.r) > 4 &&
-            hexDistance(h.q, h.r, ai1Start.q, ai1Start.r) > 4
-        );
-        const ai2Start = ai2Hexes[Math.floor(Math.random() * ai2Hexes.length)] || allHexes.find(h => h.q > 2);
+        const ai2Start = getHexNearAngle(-150, spawnRadius);
         cities.push({ q: ai2Start.q, r: ai2Start.r, owner: 'ai2', color: '#9b59b6', name: 'Purple City' });
         units.push(createUnit('WARRIOR', ai2Start.q, ai2Start.r, 'ai2'));
     }
@@ -367,7 +379,10 @@ function randomNormal(mean, stdDev) {
     return Math.round(Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v) * stdDev + mean);
 }
 
-function showFloatingText(x, y, text, color) {
+function showFloatingText(x, y, text, color, forceShow = false) {
+    // Only show if in visible area or forceShow is true
+    const hex = pixelToHex(x, y);
+    if (!forceShow && !currentlyVisible[`${hex.q},${hex.r}`]) return;
     floatingTexts.push({ x, y, text, color, life: 60, maxLife: 60 });
 }
 
@@ -463,7 +478,17 @@ function drawCity(city) {
     
     const pos = hexToPixel(city.q, city.r);
     const dark = !currentlyVisible[key];
-    const wallColor = dark ? '#555' : '#d4c4a0';
+    
+    // Draw gray background hex for city
+    drawHex(pos.x, pos.y, HEX_SIZE);
+    ctx.fillStyle = dark ? '#3a3a3a' : '#555555';
+    ctx.fill();
+    drawHex(pos.x, pos.y, HEX_SIZE);
+    ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    
+    const wallColor = dark ? '#444' : '#d4c4a0';
     const roofColor = dark ? '#333' : (city.owner === 'player' ? '#2a6070' : (city.owner === 'ai1' ? '#702a2a' : '#4a2a6a'));
     
     ctx.fillStyle = wallColor;
@@ -635,11 +660,20 @@ function getAttackTargets(unit) {
 function rangedAttack(attacker, defender) {
     const dmg = Math.max(1, randomNormal(attacker.attack, 3));
     defender.hp -= dmg;
-    const pos = hexToPixel(defender.q, defender.r);
-    showFloatingText(pos.x, pos.y, `-${dmg}`, '#e74c3c');
-    createParticle(defender.q, defender.r, '#e74c3c');
+    
+    // Only show if player can see
+    const defKey = `${defender.q},${defender.r}`;
+    if (currentlyVisible[defKey]) {
+        const pos = hexToPixel(defender.q, defender.r);
+        showFloatingText(pos.x, pos.y, `-${dmg}`, '#e74c3c', true);
+        createParticle(defender.q, defender.r, '#e74c3c');
+        if (defender.hp <= 0) {
+            showFloatingText(pos.x, pos.y, 'Killed!', '#e74c3c', true);
+        }
+    }
+    
     attacker.moves = 0;
-    if (defender.hp <= 0) { units = units.filter(u => u !== defender); showFloatingText(pos.x, pos.y, 'Killed!', '#e74c3c'); }
+    if (defender.hp <= 0) { units = units.filter(u => u !== defender); }
     updateVision(); checkVictory();
 }
 
@@ -654,15 +688,24 @@ function attemptMove(unit, tq, tr) {
 
 function captureCity(unit, city) {
     const pos = hexToPixel(city.q, city.r);
-    showFloatingText(pos.x, pos.y, 'Captured!', '#f1c40f');
-    createParticle(city.q, city.r, '#f1c40f');
+    const oldOwner = city.owner;
     
-    if (city.owner === 'player') {
-        cities = cities.filter(c => c !== city);
+    // City is destroyed when captured
+    cities = cities.filter(c => c !== city);
+    
+    // Only show effects if visible to player
+    if (currentlyVisible[`${city.q},${city.r}`]) {
+        showFloatingText(pos.x, pos.y, 'City Destroyed!', '#f1c40f');
+        createParticle(city.q, city.r, '#f1c40f');
+    }
+    
+    // Eliminate the player who lost their city
+    if (oldOwner === 'player') {
+        // Player loses
         checkVictory();
     } else {
-        city.owner = unit.owner;
-        city.color = unit.owner === 'player' ? '#00ffff' : unit.color;
+        // AI eliminated - remove all their units too
+        units = units.filter(u => u.owner !== oldOwner);
         checkVictory();
     }
 }
@@ -672,10 +715,22 @@ function resolveCombat(attacker, defender) {
     const dmgToDef = Math.max(1, randomNormal(attacker.attack, 3));
     const dmgToAtk = Math.max(1, randomNormal(defender.attack + defTerrain.defenseBonus, 3));
     defender.hp -= dmgToDef; attacker.hp -= dmgToAtk;
-    const defPos = hexToPixel(defender.q, defender.r), atkPos = hexToPixel(attacker.q, attacker.r);
-    showFloatingText(defPos.x, defPos.y, `-${dmgToDef}`, '#e74c3c');
-    showFloatingText(atkPos.x, atkPos.y, `-${dmgToAtk}`, '#e74c3c');
-    createParticle(defender.q, defender.r, '#e74c3c'); createParticle(attacker.q, attacker.r, '#e74c3c');
+    
+    // Only show damage if player can see it
+    const defKey = `${defender.q},${defender.r}`;
+    const atkKey = `${attacker.q},${attacker.r}`;
+    
+    if (currentlyVisible[defKey]) {
+        const defPos = hexToPixel(defender.q, defender.r);
+        showFloatingText(defPos.x, defPos.y, `-${dmgToDef}`, '#e74c3c', true);
+        createParticle(defender.q, defender.r, '#e74c3c');
+    }
+    if (currentlyVisible[atkKey]) {
+        const atkPos = hexToPixel(attacker.q, attacker.r);
+        showFloatingText(atkPos.x, atkPos.y, `-${dmgToAtk}`, '#e74c3c', true);
+        createParticle(attacker.q, attacker.r, '#e74c3c');
+    }
+    
     attacker.moves = 0;
     if (defender.hp <= 0 && attacker.hp > 0) { attacker.q = defender.q; attacker.r = defender.r; }
     units = units.filter(u => u.hp > 0);
