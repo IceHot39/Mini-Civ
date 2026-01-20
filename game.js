@@ -1,4 +1,96 @@
-// CONFIGURATION
+function showStartMenu() {
+    initDOM();
+    gameStarted = false;
+    difficulty = 'easy';
+    numAIs = 1;
+    
+    drawStartMenu();
+    canvas.onclick = handleStartClick;
+}
+
+function drawStartMenu() {
+    ctx.fillStyle = '#1a252f';
+    ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    ctx.fillStyle = '#f1c40f';
+    ctx.font = 'bold 36px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('MINI CIV', CANVAS_WIDTH/2, 100);
+    
+    // Opponents
+    ctx.fillStyle = '#ecf0f1';
+    ctx.font = '18px Arial';
+    ctx.fillText('Opponents:', CANVAS_WIDTH/2, 170);
+    
+    ctx.fillStyle = numAIs === 1 ? '#27ae60' : '#555';
+    ctx.fillRect(CANVAS_WIDTH/2 - 130, 190, 120, 40);
+    ctx.fillStyle = numAIs === 2 ? '#e67e22' : '#555';
+    ctx.fillRect(CANVAS_WIDTH/2 + 10, 190, 120, 40);
+    
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 16px Arial';
+    ctx.fillText('1 AI', CANVAS_WIDTH/2 - 70, 215);
+    ctx.fillText('2 AIs', CANVAS_WIDTH/2 + 70, 215);
+    
+    // Difficulty
+    ctx.fillStyle = '#ecf0f1';
+    ctx.font = '18px Arial';
+    ctx.fillText('Difficulty:', CANVAS_WIDTH/2, 280);
+    
+    ctx.fillStyle = difficulty === 'easy' ? '#27ae60' : '#555';
+    ctx.fillRect(CANVAS_WIDTH/2 - 195, 300, 120, 40);
+    ctx.fillStyle = difficulty === 'normal' ? '#e67e22' : '#555';
+    ctx.fillRect(CANVAS_WIDTH/2 - 60, 300, 120, 40);
+    ctx.fillStyle = difficulty === 'hard' ? '#c0392b' : '#555';
+    ctx.fillRect(CANVAS_WIDTH/2 + 75, 300, 120, 40);
+    
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 14px Arial';
+    ctx.fillText('Easy', CANVAS_WIDTH/2 - 135, 325);
+    ctx.fillText('Normal', CANVAS_WIDTH/2, 325);
+    ctx.fillText('Hard', CANVAS_WIDTH/2 + 135, 325);
+    
+    // Difficulty descriptions
+    ctx.fillStyle = '#95a5a6';
+    ctx.font = '12px Arial';
+    if (difficulty === 'easy') ctx.fillText('Standard game', CANVAS_WIDTH/2, 365);
+    else if (difficulty === 'normal') ctx.fillText('AI gets +15% combat bonus', CANVAS_WIDTH/2, 365);
+    else ctx.fillText('AI +15% combat & faster training', CANVAS_WIDTH/2, 365);
+    
+    // Start button
+    ctx.fillStyle = '#3498db';
+    ctx.fillRect(CANVAS_WIDTH/2 - 80, 400, 160, 50);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 20px Arial';
+    ctx.fillText('START', CANVAS_WIDTH/2, 432);
+    
+    ctx.font = '12px Arial';
+    ctx.fillStyle = '#95a5a6';
+    ctx.fillText('Capture enemy cities to win!', CANVAS_WIDTH/2, 480);
+}
+
+function handleStartClick(e) {
+    if (gameStarted) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    // Opponent buttons
+    if (y >= 190 && y <= 230) {
+        if (x >= CANVAS_WIDTH/2 - 130 && x <= CANVAS_WIDTH/2 - 10) { numAIs = 1; drawStartMenu(); }
+        else if (x >= CANVAS_WIDTH/2 + 10 && x <= CANVAS_WIDTH/2 + 130) { numAIs = 2; drawStartMenu(); }
+    }
+    // Difficulty buttons
+    if (y >= 300 && y <= 340) {
+        if (x >= CANVAS_WIDTH/2 - 195 && x <= CANVAS_WIDTH/2 - 75) { difficulty = 'easy'; drawStartMenu(); }
+        else if (x >= CANVAS_WIDTH/2 - 60 && x <= CANVAS_WIDTH/2 + 60) { difficulty = 'normal'; drawStartMenu(); }
+        else if (x >= CANVAS_WIDTH/2 + 75 && x <= CANVAS_WIDTH/2 + 195) { difficulty = 'hard'; drawStartMenu(); }
+    }
+    // Start button
+    if (y >= 400 && y <= 450 && x >= CANVAS_WIDTH/2 - 80 && x <= CANVAS_WIDTH/2 + 80) {
+        startGame();
+    }
+} // CONFIGURATION
 const GRID_RADIUS = 5;
 const HEX_SIZE = 34;
 const CANVAS_WIDTH = 700;
@@ -38,6 +130,7 @@ let trainingQueue = [];
 let aiTrainingQueues = {};
 let numAIs = 1;
 let gameStarted = false;
+let difficulty = 'easy'; // easy, normal, hard
 
 // DOM ELEMENTS
 let canvas, ctx, turnDisplay, playerDisplay, tileInfoDisplay, endTurnBtn, restartBtn;
@@ -328,9 +421,13 @@ function queueUnit(typeName) {
     if (!isPlayerTurn || gameOver) return;
     const playerCity = cities.find(c => c.owner === 'player');
     if (!playerCity || trainingQueue.length > 0) return;
-    trainingQueue.push({ city: playerCity, unitType: typeName, turnsLeft: UNIT_TYPES[typeName].trainTime });
+    
+    // Hard difficulty: player trains in 4 turns
+    const trainTime = difficulty === 'hard' ? 4 : UNIT_TYPES[typeName].trainTime;
+    
+    trainingQueue.push({ city: playerCity, unitType: typeName, turnsLeft: trainTime });
     const pos = hexToPixel(playerCity.q, playerCity.r);
-    showFloatingText(pos.x, pos.y, `Training ${UNIT_TYPES[typeName].icon}...`, '#f1c40f');
+    showFloatingText(pos.x, pos.y, `Training ${UNIT_TYPES[typeName].icon}...`, '#f1c40f', true);
     updateTrainingDisplay();
 }
 
@@ -651,17 +748,49 @@ function getAttackTargets(unit) {
         const tile = map[key];
         const dist = hexDistance(unit.q, unit.r, tile.q, tile.r);
         if (dist === 0 || dist > unit.range) continue;
+        
+        // Check line of sight - can't shoot over mountains or rainforest
+        if (!hasLineOfSight(unit.q, unit.r, tile.q, tile.r)) continue;
+        
         const enemy = units.find(u => u.q === tile.q && u.r === tile.r && u.owner !== unit.owner);
         if (enemy && currentlyVisible[key]) targets.push({ q: tile.q, r: tile.r });
     }
     return targets;
 }
 
+function hasLineOfSight(q1, r1, q2, r2) {
+    // Get hexes along the line between attacker and target
+    const dist = hexDistance(q1, r1, q2, r2);
+    if (dist <= 1) return true; // Adjacent, always visible
+    
+    // Check intermediate hexes for blocking terrain
+    for (let i = 1; i < dist; i++) {
+        const t = i / dist;
+        // Lerp in cube coordinates
+        const s1 = -q1 - r1, s2 = -q2 - r2;
+        const q = q1 + (q2 - q1) * t;
+        const r = r1 + (r2 - r1) * t;
+        const rounded = hexRound(q, r);
+        
+        const tile = map[`${rounded.q},${rounded.r}`];
+        if (tile && (tile.terrain.type === 'mountain' || tile.terrain.type === 'rainforest')) {
+            return false; // Blocked
+        }
+    }
+    return true;
+}
+
 function rangedAttack(attacker, defender) {
-    const dmg = Math.max(1, randomNormal(attacker.attack, 3));
+    let atkDamage = attacker.attack;
+    
+    // Difficulty bonus for AI
+    if ((difficulty === 'normal' || difficulty === 'hard') && attacker.owner !== 'player' && defender.owner === 'player') {
+        atkDamage = Math.round(atkDamage * 1.15);
+    }
+    
+    const dmg = Math.max(1, randomNormal(atkDamage, 3));
     defender.hp -= dmg;
     
-    // Only show if player can see
     const defKey = `${defender.q},${defender.r}`;
     if (currentlyVisible[defKey]) {
         const pos = hexToPixel(defender.q, defender.r);
@@ -712,11 +841,22 @@ function captureCity(unit, city) {
 
 function resolveCombat(attacker, defender) {
     const defTerrain = map[`${defender.q},${defender.r}`].terrain;
-    const dmgToDef = Math.max(1, randomNormal(attacker.attack, 3));
-    const dmgToAtk = Math.max(1, randomNormal(defender.attack + defTerrain.defenseBonus, 3));
+    
+    let atkDamage = attacker.attack;
+    let defDamage = defender.attack + defTerrain.defenseBonus;
+    
+    // Difficulty bonus: AI gets +15% damage vs player on normal/hard
+    if ((difficulty === 'normal' || difficulty === 'hard') && attacker.owner !== 'player' && defender.owner === 'player') {
+        atkDamage = Math.round(atkDamage * 1.15);
+    }
+    if ((difficulty === 'normal' || difficulty === 'hard') && defender.owner !== 'player' && attacker.owner === 'player') {
+        defDamage = Math.round(defDamage * 1.15);
+    }
+    
+    const dmgToDef = Math.max(1, randomNormal(atkDamage, 3));
+    const dmgToAtk = Math.max(1, randomNormal(defDamage, 3));
     defender.hp -= dmgToDef; attacker.hp -= dmgToAtk;
     
-    // Only show damage if player can see it
     const defKey = `${defender.q},${defender.r}`;
     const atkKey = `${attacker.q},${attacker.r}`;
     
@@ -923,16 +1063,31 @@ function aiTurn(aiOwner) {
             if (bestTarget) { attemptMove(unit, bestTarget.q, bestTarget.r); return; }
         }
         
-        // 5. ADVANCE TOWARDS NEAREST ENEMY CITY
+        // 5. ADVANCE TOWARDS NEAREST ENEMY CITY (with random path variation)
         const targetCity = enemyCities.reduce((nearest, c) => {
             const d = hexDistance(unit.q, unit.r, c.q, c.r);
             return (!nearest || d < nearest.dist) ? { city: c, dist: d } : nearest;
         }, null);
         
         if (targetCity && validMoves.length > 0) {
+            // Find all moves that get us closer, then pick randomly for path variety
+            const currentDist = hexDistance(unit.q, unit.r, targetCity.city.q, targetCity.city.r);
+            const goodMoves = validMoves.filter(m => {
+                if (unit.rangedOnly && enemyUnits.find(e => e.q === m.q && e.r === m.r)) return false;
+                const d = hexDistance(m.q, m.r, targetCity.city.q, targetCity.city.r);
+                return d < currentDist;
+            });
+            
+            if (goodMoves.length > 0) {
+                // Randomly pick from good moves for path variety
+                const chosen = goodMoves[Math.floor(Math.random() * goodMoves.length)];
+                attemptMove(unit, chosen.q, chosen.r);
+                return;
+            }
+            
+            // Fallback: pick any valid move closest to target
             let best = null, minD = Infinity;
             validMoves.forEach(m => {
-                // Avoid moving into enemy units for archers
                 if (unit.rangedOnly && enemyUnits.find(e => e.q === m.q && e.r === m.r)) return;
                 const d = hexDistance(m.q, m.r, targetCity.city.q, targetCity.city.r);
                 if (d < minD) { minD = d; best = m; }
@@ -940,20 +1095,24 @@ function aiTurn(aiOwner) {
             if (best) { attemptMove(unit, best.q, best.r); return; }
         }
         
-        // 6. FALLBACK: Move towards any enemy
+        // 6. FALLBACK: Move towards any enemy (with random path)
         const nearestEnemy = enemyUnits.reduce((nearest, e) => {
             const d = hexDistance(unit.q, unit.r, e.q, e.r);
             return (!nearest || d < nearest.dist) ? { unit: e, dist: d } : nearest;
         }, null);
         
         if (nearestEnemy && validMoves.length > 0) {
-            let best = null, minD = Infinity;
-            validMoves.forEach(m => {
-                if (unit.rangedOnly && enemyUnits.find(e => e.q === m.q && e.r === m.r)) return;
+            const currentDist = hexDistance(unit.q, unit.r, nearestEnemy.unit.q, nearestEnemy.unit.r);
+            const goodMoves = validMoves.filter(m => {
+                if (unit.rangedOnly && enemyUnits.find(e => e.q === m.q && e.r === m.r)) return false;
                 const d = hexDistance(m.q, m.r, nearestEnemy.unit.q, nearestEnemy.unit.r);
-                if (d < minD) { minD = d; best = m; }
+                return d < currentDist;
             });
-            if (best) attemptMove(unit, best.q, best.r);
+            
+            if (goodMoves.length > 0) {
+                const chosen = goodMoves[Math.floor(Math.random() * goodMoves.length)];
+                attemptMove(unit, chosen.q, chosen.r);
+            }
         }
     });
 }
